@@ -19,20 +19,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ⚠️ COLE AQUI O SEU LINK DO NEON TECH ENTRE AS ASPAS
-# Exemplo: DATABASE_URL = "postgresql://usuario:senha@ep-cool-darkness...neon.tech/neondb?sslmode=require"
-DATABASE_URL = "postgresql://neondb_owner:npg_i0MgPWlm6UBK@ep-twilight-wildflower-ac9ra3lq-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+# 🌟 LINK CORRIGIDO SEM O CHANNEL BINDING
+DATABASE_URL = "postgresql://neondb_owner:npg_i0MgPWlm6UBK@ep-twilight-wildflower-ac9ra3lq-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require"
 
-# Ajuste técnico para garantir compatibilidade com o Render
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Configuração do Banco de Dados usando SQLAlchemy
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Definição das Tabelas Reais no Banco de Dados
 class MoradorDB(Base):
     __tablename__ = "moradores"
     id = Column(Integer, primary_key=True, index=True)
@@ -52,10 +48,8 @@ class EncomendaDB(Base):
     descricao = Column(String)
     status = Column(String, default="PENDENTE")
 
-# Cria as tabelas na nuvem se elas não existirem
 Base.metadata.create_all(bind=engine)
 
-# Modelos para recebimento de dados da tela
 class Morador(BaseModel):
     id: int
     nome_completo: str
@@ -89,7 +83,7 @@ def pagina_inicial():
 @app.post("/moradores/importar-excel")
 async def importar_excel(file: UploadFile = File(...)):
     if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail=value="Envie um arquivo Excel válido (.xlsx)")
+        raise HTTPException(status_code=400, detail="Envie um arquivo Excel válido (.xlsx)")
     try:
         conteudo = await file.read()
         df = pd.read_excel(io.BytesIO(conteudo))
@@ -178,10 +172,11 @@ def registrar_encomenda(encomenda: EncomendaInput):
     db.commit()
     db.refresh(nova_encomenda)
     
+    # Texto corrigido e limpo
     texto_whatsapp = (
         f"Olá, {morador.nome_completo}! 📦\n\n"
         f"Informamos que uma nova encomenda chegou para você e já está disponível para retirada na portaria.\n\n"
-        f"🔹 Endereço: Qd. {morador.quadra} - Conj. {morador.conjunto} - Casa/Lote {morador_lote := morador.casa_lote}\n"
+        f"🔹 Endereço: Qd. {morador.quadra} - Conj. {morador.conjunto} - Casa/Lote {morador.casa_lote}\n"
         f"🔹 Identificação/Rastreio: {encomenda.codigo_rastreio}\n\n"
         f"Por gentileza, compareça à portaria portando um documento para retirar o seu pacote.\n\n"
         f"Atenciosamente,\nAdministração do Condomínio"
