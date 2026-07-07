@@ -6,9 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import io
 import os
-import sqlite3
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-app = FastAPI(title="Sistema de Encomendas - Condomínio Horizontal")
+app = FastAPI(title="Sistema de Encomendas - Banco Permanente")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,42 +19,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_FILE = "portaria.db"
+# ⚠️ COLE AQUI O SEU LINK DO NEON TECH ENTRE AS ASPAS
+# Exemplo: DATABASE_URL = "postgresql://usuario:senha@ep-cool-darkness...neon.tech/neondb?sslmode=require"
+DATABASE_URL = "postgresql://neondb_owner:npg_i0MgPWlm6UBK@ep-twilight-wildflower-ac9ra3lq-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
-# Função para conectar ao banco de dados e criar as tabelas se não existirem
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    # Tabela de Moradores
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS moradores (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome_completo TEXT,
-            quadra TEXT,
-            conjunto TEXT,
-            casa_lote TEXT,
-            telefone TEXT
-        )
-    """)
-    # Tabela de Encomendas
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS encomendas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            morador_id INTEGER,
-            nome_morador TEXT,
-            endereco TEXT,
-            codigo_rastreio TEXT,
-            descricao TEXT,
-            status TEXT,
-            FOREIGN KEY (morador_id) REFERENCES moradores (id)
-        )
-    """)
-    conn.commit()
-    conn.close()
+# Ajuste técnico para garantir compatibilidade com o Render
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Inicializa o banco de dados assim que o script roda
-init_db()
+# Configuração do Banco de Dados usando SQLAlchemy
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
+# Definição das Tabelas Reais no Banco de Dados
+class MoradorDB(Base):
+    __tablename__ = "moradores"
+    id = Column(Integer, primary_key=True, index=True)
+    nome_completo = Column(String)
+    quadra = Column(String)
+    conjunto = Column(String)
+    casa_lote = Column(String)
+    telefone = Column(String)
+
+class EncomendaDB(Base):
+    __tablename__ = "encomendas"
+    id = Column(Integer, primary_key=True, index=True)
+    morador_id = Column(Integer, ForeignKey("moradores.id"))
+    nome_morador = Column(String)
+    endereco = Column(String)
+    codigo_rastreio = Column(String)
+    descricao = Column(String)
+    status = Column(String, default="PENDENTE")
+
+# Cria as tabelas na nuvem se elas não existirem
+Base.metadata.create_all(bind=engine)
+
+# Modelos para recebimento de dados da tela
 class Morador(BaseModel):
     id: int
     nome_completo: str
@@ -87,7 +89,7 @@ def pagina_inicial():
 @app.post("/moradores/importar-excel")
 async def importar_excel(file: UploadFile = File(...)):
     if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Envie um arquivo Excel válido (.xlsx)")
+        raise HTTPException(status_code=400, detail=value="Envie um arquivo Excel válido (.xlsx)")
     try:
         conteudo = await file.read()
         df = pd.read_excel(io.BytesIO(conteudo))
@@ -96,28 +98,20 @@ async def importar_excel(file: UploadFile = File(...)):
             if col not in df.columns:
                 raise HTTPException(status_code=400, detail=f"Coluna ausente: {col}")
         
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        
-        contagem_novos = 0
+        db = SessionLocal()
         for _, linha in df.iterrows():
             tel_limpo = ''.join(filter(str.isdigit, str(linha["Telefone (WhatsApp)"])))
-            
-            cursor.execute("""
-                INSERT INTO moradores (nome_completo, quadra, conjunto, casa_lote, telefone)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                str(linha["Nome Completo"]).strip(),
-                str(linha["Quadra"]).strip(),
-                str(linha["Conjunto"]).strip(),
-                str(linha["Casa/Lote"]).strip(),
-                tel_limpo
-            ))
-            contagem_novos += 1
-            
-        conn.commit()
-        conn.close()
-        return {"sucesso": True, "mensagem": f"{contagem_novos} moradores importados com sucesso!"}
+            novo_morador = MoradorDB(
+                nome_completo=str(linha["Nome Completo"]).strip(),
+                quadra=str(linha["Quadra"]).strip(),
+                conjunto=str(linha["Conjunto"]).strip(),
+                casa_lote=str(linha["Casa/Lote"]).strip(),
+                telefone=tel_limpo
+            )
+            db.add(novo_morador)
+        db.commit()
+        db.close()
+        return {"sucesso": True, "mensagem": "Moradores importados com sucesso na nuvem!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
 
@@ -125,103 +119,97 @@ async def importar_excel(file: UploadFile = File(...)):
 @app.post("/moradores/cadastrar-manual")
 def cadastrar_manual(morador: MoradorManualInput):
     tel_limpo = ''.join(filter(str.isdigit, morador.telefone))
-    
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO moradores (nome_completo, quadra, conjunto, casa_lote, telefone)
-        VALUES (?, ?, ?, ?, ?)
-    """, (morador.nome_completo.strip(), morador.quadra.strip(), morador.conjunto.strip(), morador.casa_lote.strip(), tel_limpo))
-    conn.commit()
-    conn.close()
-    
-    return {"sucesso": True, "mensagem": "Morador cadastrado!"}
+    db = SessionLocal()
+    novo = MoradorDB(
+        nome_completo=morador.nome_completo.strip(),
+        quadra=morador.quadra.strip(),
+        conjunto=morador.conjunto.strip(),
+        casa_lote=morador.casa_lote.strip(),
+        telefone=tel_limpo
+    )
+    db.add(novo)
+    db.commit()
+    db.close()
+    return {"sucesso": True, "mensagem": "Morador cadastrado na nuvem!"}
 
 
 @app.get("/moradores", response_model=List[Morador])
 def listar_moradores():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, nome_completo, quadra, conjunto, casa_lote, telefone FROM moradores")
-    linhas = cursor.fetchall()
-    conn.close()
-    
-    moradores = []
-    for l in linhas:
-        moradores.append({
-            "id": l[0], "nome_completo": l[1], "quadra": l[2], "conjunto": l[3], "casa_lote": l[4], "telefone": l[5]
-        })
-    return moradores
+    db = SessionLocal()
+    linhas = db.query(MoradorDB).all()
+    db.close()
+    return [{
+        "id": l.id, "nome_completo": l.nome_completo, "quadra": l.quadra,
+        "conjunto": l.conjunto, "casa_lote": l.casa_lote, "telefone": l.telefone
+    } for l in linhas]
 
 
 @app.delete("/moradores/{morador_id}")
 def deletar_morador(morador_id: int):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM moradores WHERE id = ?", (morador_id,))
-    conn.commit()
-    conn.close()
+    db = SessionLocal()
+    morador = db.query(MoradorDB).filter(MoradorDB.id == morador_id).first()
+    if morador:
+        db.delete(morador)
+        db.commit()
+    db.close()
     return {"sucesso": True, "mensagem": "Morador removido!"}
 
 
 @app.post("/encomendas/registrar")
 def registrar_encomenda(encomenda: EncomendaInput):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    
-    # Busca o morador no banco
-    cursor.execute("SELECT nome_completo, quadra, conjunto, casa_lote, telefone FROM moradores WHERE id = ?", (encomenda.morador_id,))
-    morador = cursor.fetchone()
+    db = SessionLocal()
+    morador = db.query(MoradorDB).filter(MoradorDB.id == encomenda.morador_id).first()
     
     if not morador:
-        conn.close()
+        db.close()
         raise HTTPException(status_code=404, detail="Morador não encontrado.")
     
-    nome_morador, quadra, conjunto, casa_lote, telefone = morador
-    endereco_completo = f"Qd. {quadra} - Cj. {conjunto} - Casa {casa_lote}"
+    endereco_completo = f"Qd. {morador.quadra} - Cj. {morador.conjunto} - Casa {morador.casa_lote}"
     
-    # Salva a encomenda
-    cursor.execute("""
-        INSERT INTO encomendas (morador_id, nome_morador, endereco, codigo_rastreio, descricao, status)
-        VALUES (?, ?, ?, ?, ?, 'PENDENTE')
-    """, (encomenda.morador_id, nome_morador, endereco_completo, encomenda.codigo_rastreio, encomenda.descricao))
-    
-    enc_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+    nova_encomenda = EncomendaDB(
+        morador_id=encomenda.morador_id,
+        nome_morador=morador.nome_completo,
+        endereco=endereco_completo,
+        codigo_rastreio=encomenda.codigo_rastreio,
+        descricao=encomenda.descricao,
+        status="PENDENTE"
+    )
+    db.add(nova_encomenda)
+    db.commit()
+    db.refresh(nova_encomenda)
     
     texto_whatsapp = (
-        f"Olá, {nome_morador}! 📦\n\n"
+        f"Olá, {morador.nome_completo}! 📦\n\n"
         f"Informamos que uma nova encomenda chegou para você e já está disponível para retirada na portaria.\n\n"
-        f"🔹 Endereço: Qd. {quadra} - Conj. {conjunto} - Casa/Lote {casa_lote}\n"
+        f"🔹 Endereço: Qd. {morador.quadra} - Conj. {morador.conjunto} - Casa/Lote {morador_lote := morador.casa_lote}\n"
         f"🔹 Identificação/Rastreio: {encomenda.codigo_rastreio}\n\n"
         f"Por gentileza, compareça à portaria portando um documento para retirar o seu pacote.\n\n"
         f"Atenciosamente,\nAdministração do Condomínio"
     )
-    return {"sucesso": True, "encomenda_id": enc_id, "telefone": telefone, "mensagem_texto": texto_whatsapp}
+    
+    tel_morador = morador.telefone
+    db.close()
+    return {"sucesso": True, "encomenda_id": nova_encomenda.id, "telefone": tel_morador, "mensagem_texto": texto_whatsapp}
 
 
 @app.post("/encomendas/{encomenda_id}/baixa")
 def dar_baixa_encomenda(encomenda_id: int):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE encomendas SET status = 'ENTREGUE' WHERE id = ?", (encomenda_id,))
-    conn.commit()
-    conn.close()
+    db = SessionLocal()
+    encomenda = db.query(EncomendaDB).filter(EncomendaDB.id == encomenda_id).first()
+    if encomenda:
+        encomenda.status = "ENTREGUE"
+        db.commit()
+    db.close()
     return {"sucesso": True, "mensagem": "Baixa registrada!"}
 
 
 @app.get("/encomendas/pendentes")
 def listar_pendentes():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, morador_id, nome_morador, endereco, codigo_rastreio, descricao, status FROM encomendas WHERE status = 'PENDENTE'")
-    linhas = cursor.fetchall()
-    conn.close()
-    
-    pendentes = []
-    for l in linhas:
-        pendentes.append({
-            "id": l[0], "morador_id": l[1], "nome_morador": l[2], "endereco": l[3], "codigo_rastreio": l[4], "descricao": l[5], "status": l[6]
-        })
-    return pendentes
+    db = SessionLocal()
+    linhas = db.query(EncomendaDB).filter(EncomendaDB.status == "PENDENTE").all()
+    db.close()
+    return [{
+        "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
+        "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
+        "descricao": l.descricao, "status": l.status
+    } for l in linhas]
