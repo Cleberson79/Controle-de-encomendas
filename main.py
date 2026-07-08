@@ -7,10 +7,10 @@ import pandas as pd
 import io
 import os
 import random
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, func
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-app = FastAPI(title="Sistema de Encomendas - Controle de Duplicidade")
+app = FastAPI(title="Sistema de Encomendas - Inteligência Case-Insensitive")
 
 app.add_middleware(
     CORSMiddleware,
@@ -104,18 +104,18 @@ async def importar_excel(file: UploadFile = File(...)):
             casa_limpa = str(linha["Casa/Lote"]).strip()
             tel_limpo = ''.join(filter(str.isdigit, str(linha["Telefone (WhatsApp)"])))
             
-            # 🌟 VERIFICAÇÃO SE JÁ EXISTE NO BANCO DE DADOS (Trava anti-duplicidade)
+            # 🌟 TRAVA INTELIGENTE: .ilike() ignora maiúsculas e minúsculas completamente!
             existe = db.query(MoradorDB).filter(
-                MoradorDB.nome_completo == nome_limpo,
-                MoradorDB.quadra == quadra_limpa,
-                MoradorDB.conjunto == conjunto_limpa,
-                MoradorDB.casa_lote == casa_limpa,
+                MoradorDB.nome_completo.ilike(nome_limpo),
+                MoradorDB.quadra.ilike(quadra_limpa),
+                MoradorDB.conjunto.ilike(conjunto_limpa),
+                MoradorDB.casa_lote.ilike(casa_limpa),
                 MoradorDB.telefone == tel_limpo
             ).first()
             
             if existe:
                 contagem_duplicados += 1
-                continue  # Pula esta linha e vai para o próximo morador da planilha
+                continue
                 
             novo_morador = MoradorDB(
                 nome_completo=nome_limpo,
@@ -132,7 +132,7 @@ async def importar_excel(file: UploadFile = File(...)):
         
         msg = f"Importação concluída! {contagem_novos} novos moradores adicionados."
         if contagem_duplicados > 0:
-            msg += f" ({contagem_duplicados} registros duplicados foram ignorados)."
+            msg += f" ({contagem_duplicados} registros duplicados ignorados pelo filtro inteligente)."
             
         return {"sucesso": True, "mensagem": msg}
     except Exception as e:
@@ -149,18 +149,17 @@ def cadastrar_manual(morador: MoradorManualInput):
     
     db = SessionLocal()
     
-    # 🌟 VERIFICAÇÃO INDIVIDUAL (Para o botão de cadastro manual)
+    # 🌟 TRAVA INTELIGENTE MANUAL: Bloqueia mesmo se mudar maiúsculas/minúsculas
     existe = db.query(MoradorDB).filter(
-        MoradorDB.nome_completo == nome_limpo,
-        MoradorDB.quadra == quadra_limpa,
-        MoradorDB.conjunto == conjunto_limpa,
-        MoradorDB.casa_lote == casa_limpa,
+        MoradorDB.nome_completo.ilike(nome_limpo),
+        MoradorDB.quadra.ilike(quadra_limpa),
+        MoradorDB.conjunto.ilike(conjunto_limpa),
+        MoradorDB.casa_lote.ilike(casa_limpa),
         MoradorDB.telefone == tel_limpo
     ).first()
     
     if existe:
         db.close()
-        # Dispara uma mensagem em vermelho na tela avisando o porteiro
         raise HTTPException(status_code=400, detail="Atenção: Este morador com estes mesmos dados já está cadastrado no sistema!")
         
     novo = MoradorDB(
@@ -258,4 +257,4 @@ def listar_pendentes():
         "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
         "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
         "descricao": l.descricao, "status": l.status, "pin_retirada": l.pin_retirada
-    } for l in linhas]
+    } for l in lines]
