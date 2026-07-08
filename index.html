@@ -289,8 +289,15 @@
 
             encomendas.forEach(e => {
                 const novaLinha = tabela.insertRow();
+                // 🌟 Adicionamos uma tarja vermelha/laranja destacando o PIN para o caderno
                 novaLinha.innerHTML = `
-                    <td><b>${e.nome_morador}</b><br><small>${e.endereco}</small></td>
+                    <td>
+                        <b>${e.nome_morador}</b><br>
+                        <small>${e.endereco}</small><br>
+                        <span style="background-color: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-top: 4px; display: inline-block;">
+                            PIN do Caderno: ${e.pin_retirada}
+                        </span>
+                    </td>
                     <td><code>${e.codigo_rastreio}</code></td>
                     <td><button onclick="darBaixaEncomenda(${e.id})" class="btn-baixa">Dar Baixa</button></td>
                 `;
