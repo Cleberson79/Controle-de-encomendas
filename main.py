@@ -6,11 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import io
 import os
-import random  # 🌟 Biblioteca para gerar o PIN aleatório
+import random
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-app = FastAPI(title="Sistema de Encomendas - Controle por PIN")
+app = FastAPI(title="Sistema de Encomendas - Controle de Duplicidade")
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,7 +47,7 @@ class EncomendaDB(Base):
     codigo_rastreio = Column(String)
     descricao = Column(String)
     status = Column(String, default="PENDENTE")
-    pin_retirada = Column(String)  # 🌟 Nova coluna para guardar o PIN de 4 dígitos
+    pin_retirada = Column(String)
 
 Base.metadata.create_all(bind=engine)
 
@@ -94,32 +94,80 @@ async def importar_excel(file: UploadFile = File(...)):
                 raise HTTPException(status_code=400, detail=f"Coluna ausente: {col}")
         
         db = SessionLocal()
+        contagem_novos = 0
+        contagem_duplicados = 0
+        
         for _, linha in df.iterrows():
+            nome_limpo = str(linha["Nome Completo"]).strip()
+            quadra_limpa = str(linha["Quadra"]).strip()
+            conjunto_limpa = str(linha["Conjunto"]).strip()
+            casa_limpa = str(linha["Casa/Lote"]).strip()
             tel_limpo = ''.join(filter(str.isdigit, str(linha["Telefone (WhatsApp)"])))
+            
+            # 🌟 VERIFICAÇÃO SE JÁ EXISTE NO BANCO DE DADOS (Trava anti-duplicidade)
+            existe = db.query(MoradorDB).filter(
+                MoradorDB.nome_completo == nome_limpo,
+                MoradorDB.quadra == quadra_limpa,
+                MoradorDB.conjunto == conjunto_limpa,
+                MoradorDB.casa_lote == casa_limpa,
+                MoradorDB.telefone == tel_limpo
+            ).first()
+            
+            if existe:
+                contagem_duplicados += 1
+                continue  # Pula esta linha e vai para o próximo morador da planilha
+                
             novo_morador = MoradorDB(
-                nome_completo=str(linha["Nome Completo"]).strip(),
-                quadra=str(linha["Quadra"]).strip(),
-                conjunto=str(linha["Conjunto"]).strip(),
-                casa_lote=str(linha["Casa/Lote"]).strip(),
+                nome_completo=nome_limpo,
+                quadra=quadra_limpa,
+                conjunto=conjunto_limpa,
+                casa_lote=casa_limpa,
                 telefone=tel_limpo
             )
             db.add(novo_morador)
+            contagem_novos += 1
+            
         db.commit()
         db.close()
-        return {"sucesso": True, "mensagem": "Moradores importados com sucesso na nuvem!"}
+        
+        msg = f"Importação concluída! {contagem_novos} novos moradores adicionados."
+        if contagem_duplicados > 0:
+            msg += f" ({contagem_duplicados} registros duplicados foram ignorados)."
+            
+        return {"sucesso": True, "mensagem": msg}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
 
 
 @app.post("/moradores/cadastrar-manual")
 def cadastrar_manual(morador: MoradorManualInput):
+    nome_limpo = morador.nome_completo.strip()
+    quadra_limpa = morador.quadra.strip()
+    conjunto_limpa = morador.conjunto.strip()
+    casa_limpa = morador.casa_lote.strip()
     tel_limpo = ''.join(filter(str.isdigit, morador.telefone))
+    
     db = SessionLocal()
+    
+    # 🌟 VERIFICAÇÃO INDIVIDUAL (Para o botão de cadastro manual)
+    existe = db.query(MoradorDB).filter(
+        MoradorDB.nome_completo == nome_limpo,
+        MoradorDB.quadra == quadra_limpa,
+        MoradorDB.conjunto == conjunto_limpa,
+        MoradorDB.casa_lote == casa_limpa,
+        MoradorDB.telefone == tel_limpo
+    ).first()
+    
+    if existe:
+        db.close()
+        # Dispara uma mensagem em vermelho na tela avisando o porteiro
+        raise HTTPException(status_code=400, detail="Atenção: Este morador com estes mesmos dados já está cadastrado no sistema!")
+        
     novo = MoradorDB(
-        nome_completo=morador.nome_completo.strip(),
-        quadra=morador.quadra.strip(),
-        conjunto=morador.conjunto.strip(),
-        casa_lote=morador.casa_lote.strip(),
+        nome_completo=nome_limpo,
+        quadra=quadra_limpa,
+        conjunto=conjunto_limpa,
+        casa_lote=casa_limpa,
         telefone=tel_limpo
     )
     db.add(novo)
@@ -160,8 +208,6 @@ def registrar_encomenda(encomenda: EncomendaInput):
         raise HTTPException(status_code=404, detail="Morador não encontrado.")
     
     endereco_completo = f"Qd. {morador.quadra} - Cj. {morador.conjunto} - Casa {morador.casa_lote}"
-    
-    # 🌟 GERA O PIN DE 4 DÍGITOS EXCLUSIVO PARA ESTA ENCOMENDA
     pin_gerado = str(random.randint(1000, 9999))
     
     nova_encomenda = EncomendaDB(
@@ -171,13 +217,12 @@ def registrar_encomenda(encomenda: EncomendaInput):
         codigo_rastreio=encomenda.codigo_rastreio,
         descricao=encomenda.descricao,
         status="PENDENTE",
-        pin_retirada=pin_gerado  # Salva no banco
+        pin_retirada=pin_gerado
     )
     db.add(nova_encomenda)
     db.commit()
     db.refresh(nova_encomenda)
     
-    # 🌟 TEXTO DO WHATSAPP ADAPTADO COM O PIN DE RETIRADA
     texto_whatsapp = (
         f"Olá, {morador.nome_completo}! 📦\n\n"
         f"Informamos que uma nova encomenda chegou para você e já está disponível para retirada na portaria.\n\n"
@@ -209,7 +254,6 @@ def listar_pendentes():
     db = SessionLocal()
     linhas = db.query(EncomendaDB).filter(EncomendaDB.status == "PENDENTE").all()
     db.close()
-    # 🌟 Retorna também o pin_retirada para a tela do porteiro ver
     return [{
         "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
         "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
