@@ -7,10 +7,10 @@ import pandas as pd
 import io
 import os
 import random
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, func
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-app = FastAPI(title="Sistema de Encomendas - Inteligência Case-Insensitive")
+app = FastAPI(title="Sistema de Encomendas - Bloqueio de Duplicidade Definitivo")
 
 app.add_middleware(
     CORSMiddleware,
@@ -98,18 +98,19 @@ async def importar_excel(file: UploadFile = File(...)):
         contagem_duplicados = 0
         
         for _, linha in df.iterrows():
-            nome_limpo = str(linha["Nome Completo"]).strip()
-            quadra_limpa = str(linha["Quadra"]).strip()
-            conjunto_limpa = str(linha["Conjunto"]).strip()
-            casa_limpa = str(linha["Casa/Lote"]).strip()
+            # 🌟 PADRONIZAÇÃO FORÇADA: Tudo vira estritamente minúsculo pelo próprio Python (.lower())
+            nome_limpo = str(linha["Nome Completo"]).strip().lower()
+            quadra_limpa = str(linha["Quadra"]).strip().lower()
+            conjunto_limpa = str(linha["Conjunto"]).strip().lower()
+            casa_limpa = str(linha["Casa/Lote"]).strip().lower()
             tel_limpo = ''.join(filter(str.isdigit, str(linha["Telefone (WhatsApp)"])))
             
-            # 🌟 TRAVA INTELIGENTE: .ilike() ignora maiúsculas e minúsculas completamente!
+            # Como salvamos tudo minúsculo, a comparação direta se torna 100% infalível
             existe = db.query(MoradorDB).filter(
-                MoradorDB.nome_completo.ilike(nome_limpo),
-                MoradorDB.quadra.ilike(quadra_limpa),
-                MoradorDB.conjunto.ilike(conjunto_limpa),
-                MoradorDB.casa_lote.ilike(casa_limpa),
+                MoradorDB.nome_completo == nome_limpo,
+                MoradorDB.quadra == quadra_limpa,
+                MoradorDB.conjunto == conjunto_limpa,
+                MoradorDB.casa_lote == casa_limpa,
                 MoradorDB.telefone == tel_limpo
             ).first()
             
@@ -132,7 +133,7 @@ async def importar_excel(file: UploadFile = File(...)):
         
         msg = f"Importação concluída! {contagem_novos} novos moradores adicionados."
         if contagem_duplicados > 0:
-            msg += f" ({contagem_duplicados} registros duplicados ignorados pelo filtro inteligente)."
+            msg += f" ({contagem_duplicados} registros duplicados foram ignorados)."
             
         return {"sucesso": True, "mensagem": msg}
     except Exception as e:
@@ -141,20 +142,21 @@ async def importar_excel(file: UploadFile = File(...)):
 
 @app.post("/moradores/cadastrar-manual")
 def cadastrar_manual(morador: MoradorManualInput):
-    nome_limpo = morador.nome_completo.strip()
-    quadra_limpa = morador.quadra.strip()
-    conjunto_limpa = morador.conjunto.strip()
-    casa_limpa = morador.casa_lote.strip()
+    # 🌟 PADRONIZAÇÃO FORÇADA MANUAL: Transforma a digitação do porteiro em minúsculo
+    nome_limpo = morador.nome_completo.strip().lower()
+    quadra_limpa = morador.quadra.strip().lower()
+    conjunto_limpa = morador.conjunto.strip().lower()
+    casa_limpa = morador.casa_lote.strip().lower()
     tel_limpo = ''.join(filter(str.isdigit, morador.telefone))
     
     db = SessionLocal()
     
-    # 🌟 TRAVA INTELIGENTE MANUAL: Bloqueia mesmo se mudar maiúsculas/minúsculas
+    # Validação blindada pelo Python
     existe = db.query(MoradorDB).filter(
-        MoradorDB.nome_completo.ilike(nome_limpo),
-        MoradorDB.quadra.ilike(quadra_limpa),
-        MoradorDB.conjunto.ilike(conjunto_limpa),
-        MoradorDB.casa_lote.ilike(casa_limpa),
+        MoradorDB.nome_completo == nome_limpo,
+        MoradorDB.quadra == quadra_limpa,
+        MoradorDB.conjunto == conjunto_limpa,
+        MoradorDB.casa_lote == casa_limpa,
         MoradorDB.telefone == tel_limpo
     ).first()
     
@@ -175,14 +177,19 @@ def cadastrar_manual(morador: MoradorManualInput):
     return {"sucesso": True, "mensagem": "Morador cadastrado na nuvem!"}
 
 
-@app.get("/moradores", response_model=List[Morador])
+@app.get("/moradores")
 def listar_moradores():
     db = SessionLocal()
     linhas = db.query(MoradorDB).all()
     db.close()
+    # 🌟 Toque de mestre: Ao exibir na tela do porteiro, usamos .title() e .upper() para o visual ficar bonito e legível!
     return [{
-        "id": l.id, "nome_completo": l.nome_completo, "quadra": l.quadra,
-        "conjunto": l.conjunto, "casa_lote": l.casa_lote, "telefone": l.telefone
+        "id": l.id, 
+        "nome_completo": l.nome_completo.title(),  # Transforma "maria da silva" em "Maria Da Silva"
+        "quadra": l.quadra.upper(), 
+        "conjunto": l.conjunto.upper(), 
+        "casa_lote": l.casa_lote.upper(), 
+        "telefone": l.telefone
     } for l in linhas]
 
 
@@ -206,12 +213,14 @@ def registrar_encomenda(encomenda: EncomendaInput):
         db.close()
         raise HTTPException(status_code=404, detail="Morador não encontrado.")
     
-    endereco_completo = f"Qd. {morador.quadra} - Cj. {morador.conjunto} - Casa {morador.casa_lote}"
+    # Deixa o texto formatado bonito para a etiqueta/mensagem
+    nome_bonito = morador.nome_completo.title()
+    endereco_completo = f"Qd. {morador.quadra.upper()} - Cj. {morador.conjunto.upper()} - Casa {morador.casa_lote.upper()}"
     pin_gerado = str(random.randint(1000, 9999))
     
     nova_encomenda = EncomendaDB(
         morador_id=encomenda.morador_id,
-        nome_morador=morador.nome_completo,
+        nome_morador=nome_bonito,
         endereco=endereco_completo,
         codigo_rastreio=encomenda.codigo_rastreio,
         descricao=encomenda.descricao,
@@ -223,9 +232,9 @@ def registrar_encomenda(encomenda: EncomendaInput):
     db.refresh(nova_encomenda)
     
     texto_whatsapp = (
-        f"Olá, {morador.nome_completo}! 📦\n\n"
+        f"Olá, {nome_bonito}! 📦\n\n"
         f"Informamos que uma nova encomenda chegou para você e já está disponível para retirada na portaria.\n\n"
-        f"🔹 Endereço: Qd. {morador.quadra} - Conj. {morador.conjunto} - Casa/Lote {morador.casa_lote}\n"
+        f"🔹 Endereço: {endereco_completo}\n"
         f"🔹 Identificação/Rastreio: {encomenda.codigo_rastreio}\n\n"
         f"⚠️ CÓDIGO DE RETIRADA (PIN): {pin_gerado}\n"
         f"Por gentileza, informe este código ao porteiro e assine o livro de protocolo no ato da retirada.\n\n"
@@ -257,4 +266,4 @@ def listar_pendentes():
         "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
         "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
         "descricao": l.descricao, "status": l.status, "pin_retirada": l.pin_retirada
-    } for l in lines]
+    } for l in linhas]
