@@ -6,10 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import io
 import os
+import random  # 🌟 Biblioteca para gerar o PIN aleatório
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-app = FastAPI(title="Sistema de Encomendas - Banco Permanente")
+app = FastAPI(title="Sistema de Encomendas - Controle por PIN")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,7 +20,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🌟 LINK CORRIGIDO SEM O CHANNEL BINDING
 DATABASE_URL = "postgresql://neondb_owner:npg_i0MgPWlm6UBK@ep-twilight-wildflower-ac9ra3lq-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require"
 
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
@@ -47,6 +47,7 @@ class EncomendaDB(Base):
     codigo_rastreio = Column(String)
     descricao = Column(String)
     status = Column(String, default="PENDENTE")
+    pin_retirada = Column(String)  # 🌟 Nova coluna para guardar o PIN de 4 dígitos
 
 Base.metadata.create_all(bind=engine)
 
@@ -160,25 +161,30 @@ def registrar_encomenda(encomenda: EncomendaInput):
     
     endereco_completo = f"Qd. {morador.quadra} - Cj. {morador.conjunto} - Casa {morador.casa_lote}"
     
+    # 🌟 GERA O PIN DE 4 DÍGITOS EXCLUSIVO PARA ESTA ENCOMENDA
+    pin_gerado = str(random.randint(1000, 9999))
+    
     nova_encomenda = EncomendaDB(
         morador_id=encomenda.morador_id,
         nome_morador=morador.nome_completo,
         endereco=endereco_completo,
         codigo_rastreio=encomenda.codigo_rastreio,
         descricao=encomenda.descricao,
-        status="PENDENTE"
+        status="PENDENTE",
+        pin_retirada=pin_gerado  # Salva no banco
     )
     db.add(nova_encomenda)
     db.commit()
     db.refresh(nova_encomenda)
     
-    # Texto corrigido e limpo
+    # 🌟 TEXTO DO WHATSAPP ADAPTADO COM O PIN DE RETIRADA
     texto_whatsapp = (
         f"Olá, {morador.nome_completo}! 📦\n\n"
         f"Informamos que uma nova encomenda chegou para você e já está disponível para retirada na portaria.\n\n"
         f"🔹 Endereço: Qd. {morador.quadra} - Conj. {morador.conjunto} - Casa/Lote {morador.casa_lote}\n"
         f"🔹 Identificação/Rastreio: {encomenda.codigo_rastreio}\n\n"
-        f"Por gentileza, compareça à portaria portando um documento para retirar o seu pacote.\n\n"
+        f"⚠️ CÓDIGO DE RETIRADA (PIN): {pin_gerado}\n"
+        f"Por gentileza, informe este código ao porteiro e assine o livro de protocolo no ato da retirada.\n\n"
         f"Atenciosamente,\nAdministração do Condomínio"
     )
     
@@ -203,8 +209,9 @@ def listar_pendentes():
     db = SessionLocal()
     linhas = db.query(EncomendaDB).filter(EncomendaDB.status == "PENDENTE").all()
     db.close()
+    # 🌟 Retorna também o pin_retirada para a tela do porteiro ver
     return [{
         "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
         "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
-        "descricao": l.descricao, "status": l.status
+        "descricao": l.descricao, "status": l.status, "pin_retirada": l.pin_retirada
     } for l in linhas]
