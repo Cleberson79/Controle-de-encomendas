@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,10 +7,11 @@ import pandas as pd
 import io
 import os
 import random
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+from datetime import datetime, timedelta
+from sqlalchemy import create_engine, Column, Integer, String, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, make_transient
 
-app = FastAPI(title="Sistema de Encomendas - Isolamento Total de Objetos")
+app = FastAPI(title="Sistema de Encomendas - Histórico e Backup Seguro")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,23 +42,18 @@ class MoradorDB(Base):
 class EncomendaDB(Base):
     __tablename__ = "encomendas"
     id = Column(Integer, primary_key=True, index=True)
-    morador_id = Column(Integer)  # Removido o ForeignKey rígido para evitar travas de sessão
+    morador_id = Column(Integer)
     nome_morador = Column(String)
     endereco = Column(String)
     codigo_rastreio = Column(String)
     descricao = Column(String)
     status = Column(String, default="PENDENTE")
     pin_retirada = Column(String)
+    # 🌟 NOVAS COLUNAS PARA AUDITORIA E TIMESTAMPS
+    data_entrada = Column(DateTime, default=datetime.utcnow)
+    data_entrega = Column(DateTime, nullable=True)
 
 Base.metadata.create_all(bind=engine)
-
-class Morador(BaseModel):
-    id: int
-    nome_completo: str
-    quadra: str
-    conjunto: str
-    casa_lote: str
-    telefone: str
 
 class MoradorManualInput(BaseModel):
     nome_completo: str
@@ -208,9 +204,8 @@ def registrar_encomenda(encomenda: EncomendaInput):
         db.close()
         raise HTTPException(status_code=404, detail="Morador não encontrado.")
     
-    # 🌟 O SEGREDO DO SUCESSO: Desconecta o objeto morador do banco completamente
     make_transient(morador)
-    db.close()  # Fecha a sessão imediatamente! O morador agora é um objeto Python livre.
+    db.close()
     
     nome_morador_puro = str(morador.nome_completo).title()
     quadra_pura = str(morador.quadra).upper()
@@ -221,7 +216,6 @@ def registrar_encomenda(encomenda: EncomendaInput):
     endereco_completo_puro = f"Qd. {quadra_pura} - Cj. {conjunto_pura} - Casa {casa_pura}"
     pin_gerado = str(random.randint(1000, 9999))
     
-    # Abre uma nova sessão rápida apenas para gravar a encomenda
     db_salvar = SessionLocal()
     nova_encomenda = EncomendaDB(
         morador_id=encomenda.morador_id,
@@ -230,7 +224,8 @@ def registrar_encomenda(encomenda: EncomendaInput):
         codigo_rastreio=encomenda.codigo_rastreio,
         descricao=encomenda.descricao,
         status="PENDENTE",
-        pin_retirada=pin_gerado
+        pin_retirada=pin_gerado,
+        data_entrada=datetime.now() # Captura o fuso local/servidor de entrada
     )
     db_salvar.add(nova_encomenda)
     db_salvar.commit()
@@ -258,9 +253,10 @@ def registrar_encomenda(encomenda: EncomendaInput):
 @app.post("/encomendas/{encomenda_id}/baixa")
 def dar_baixa_encomenda(encomenda_id: int):
     db = SessionLocal()
-    encomenda = db.query(EncomendaDB).filter(EncomendaDB.id == encomenda_id).first()
+    encomenda = db.query(EncomendaDB).filter(EncomendaDB.id ==_encomenda_id).first()
     if encomenda:
         encomenda.status = "ENTREGUE"
+        encomenda.data_entrega = datetime.now() # Salva o momento exato da retirada
         db.commit()
     db.close()
     return {"sucesso": True, "mensagem": "Baixa registrada!"}
@@ -275,4 +271,74 @@ def listar_pendentes():
         "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
         "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
         "descricao": l.descricao, "status": l.status, "pin_retirada": l.pin_retirada
+    } for l in lines]
+
+
+# 🌟 NOVA ROTA: Retorna o histórico completo (últimas 150 modificadas)
+@app.get("/encomendas/historico")
+def obter_historico():
+    db = SessionLocal()
+    linhas = db.query(EncomendaDB).order_by(EncomendaDB.id.desc()).limit(150).all()
+    db.close()
+    return [{
+        "id": l.id,
+        "nome_morador": l.nome_morador,
+        "endereco": l.endereco,
+        "codigo_rastreio": l.codigo_rastreio,
+        "status": l.status,
+        "data_entrada": l.data_entrada.strftime("%d/%m/%Y %H:%M") if l.data_entrada else "N/A",
+        "data_entrega": l.data_entrega.strftime("%d/%m/%Y %H:%M") if l.data_entrega else "Aguardando"
     } for l in linhas]
+
+
+# 🌟 NOVA ROTA: Executa o Backup Seguro e limpa do banco o que tem +30 dias
+@app.post("/encomendas/backup-limpeza")
+def exportar_e_limpar_banco():
+    db = SessionLocal()
+    limite_tempo = datetime.now() - timedelta(days=30)
+    
+    # Busca registros entregues há mais de 30 dias
+    registros_antigos = db.query(EncomendaDB).filter(
+        EncomendaDB.status == "ENTREGUE",
+        EncomendaDB.data_entrega < limite_tempo
+    ).all()
+    
+    if not registros_antigos:
+        db.close()
+        raise HTTPException(status_code=400, detail="Nenhum registro entregue com mais de 30 dias foi encontrado para limpeza.")
+    
+    # Monta uma lista com formato estruturado
+    dados_exportar = []
+    for reg in registros_antigos:
+        dados_exportar.append({
+            "ID Registro": reg.id,
+            "Morador": reg.nome_morador,
+            "Endereço": reg.endereco,
+            "Código Rastreio": reg.codigo_rastreio,
+            "Descrição": reg.descricao,
+            "PIN Utilizado": reg.pin_retirada,
+            "Data Entrada": reg.data_entrada.strftime("%d/%m/%Y %H:%M") if reg.data_entrada else "",
+            "Data Entrega": reg.data_entrega.strftime("%d/%m/%Y %H:%M") if reg.data_entrega else ""
+        })
+        
+    # Transforma em DataFrame do Pandas e cria a planilha em memória (io.BytesIO)
+    df = pd.DataFrame(dados_exportar)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Histórico_Expurgado')
+    output.seek(0)
+    
+    # Remove fisicamente as linhas antigas da nuvem Neon
+    db.query(EncomendaDB).filter(
+        EncomendaDB.status == "ENTREGUE",
+        EncomendaDB.data_entrega < limite_tempo
+    ).delete()
+    db.commit()
+    db.close()
+    
+    data_arquivo = datetime.now().strftime("%d-%m-%Y")
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=backup_portaria_30_dias_{data_arquivo}.xlsx"}
+    )
