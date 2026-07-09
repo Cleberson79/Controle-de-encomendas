@@ -1,269 +1,317 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from typing import List, Optional
-from fastapi.middleware.cors import CORSMiddleware
-import pandas as pd
-import io
-import os
-import random
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
-from sqlalchemy.orm import declarative_base, sessionmaker
-
-app = FastAPI(title="Sistema de Encomendas - Bloqueio de Duplicidade Definitivo")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-DATABASE_URL = "postgresql://neondb_owner:npg_i0MgPWlm6UBK@ep-twilight-wildflower-ac9ra3lq-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require"
-
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-class MoradorDB(Base):
-    __tablename__ = "moradores"
-    id = Column(Integer, primary_key=True, index=True)
-    nome_completo = Column(String)
-    quadra = Column(String)
-    conjunto = Column(String)
-    casa_lote = Column(String)
-    telefone = Column(String)
-
-class EncomendaDB(Base):
-    __tablename__ = "encomendas"
-    id = Column(Integer, primary_key=True, index=True)
-    morador_id = Column(Integer, ForeignKey("moradores.id"))
-    nome_morador = Column(String)
-    endereco = Column(String)
-    codigo_rastreio = Column(String)
-    descricao = Column(String)
-    status = Column(String, default="PENDENTE")
-    pin_retirada = Column(String)
-
-Base.metadata.create_all(bind=engine)
-
-class Morador(BaseModel):
-    id: int
-    nome_completo: str
-    quadra: str
-    conjunto: str
-    casa_lote: str
-    telefone: str
-
-class MoradorManualInput(BaseModel):
-    nome_completo: str
-    quadra: str
-    conjunto: str
-    casa_lote: str
-    telefone: str
-
-class EncomendaInput(BaseModel):
-    morador_id: int
-    codigo_rastreio: str
-    descricao: Optional[str] = "Não informada"
-
-
-@app.get("/", response_class=HTMLResponse)
-def pagina_inicial():
-    caminho_index = os.path.join(os.path.dirname(__file__), "index.html")
-    if os.path.exists(caminho_index):
-        with open(caminho_index, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>Erro: Arquivo index.html não encontrado.</h1>"
-
-
-@app.post("/moradores/importar-excel")
-async def importar_excel(file: UploadFile = File(...)):
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Envie um arquivo Excel válido (.xlsx)")
-    try:
-        conteudo = await file.read()
-        df = pd.read_excel(io.BytesIO(conteudo))
-        colunas_esperadas = ["Nome Completo", "Quadra", "Conjunto", "Casa/Lote", "Telefone (WhatsApp)"]
-        for col in colunas_esperadas:
-            if col not in df.columns:
-                raise HTTPException(status_code=400, detail=f"Coluna ausente: {col}")
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portaria - Condomínio Horizontal</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        header { background-color: #1f4e78; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        h2 { margin-top: 0; color: #1f4e78; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-size: 18px; }
+        .form-group { margin-bottom: 12px; }
+        .row-inputs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 13px; }
+        input[type="text"], input[type="search"], select { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; font-size: 15px; }
+        button { background-color: #1f4e78; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; transition: background 0.2s; }
+        button:hover { background-color: #153552; }
+        .w-100 { width: 100%; padding: 12px; }
+        .btn-success { background-color: #10b981; }
+        .btn-success:hover { background-color: #059669; }
+        .btn-danger { background-color: #ef4444; padding: 5px 10px; font-size: 12px; }
+        .btn-danger:hover { background-color: #dc2626; }
+        .btn-baixa { background-color: #f59e0b; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .btn-baixa:hover { background-color: #d97706; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; background: white; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+        th { background-color: #f8fafc; color: #1f4e78; }
         
-        db = SessionLocal()
-        contagem_novos = 0
-        contagem_duplicados = 0
-        
-        for _, linha in df.iterrows():
-            # 🌟 PADRONIZAÇÃO FORÇADA: Tudo vira estritamente minúsculo pelo próprio Python (.lower())
-            nome_limpo = str(linha["Nome Completo"]).strip().lower()
-            quadra_limpa = str(linha["Quadra"]).strip().lower()
-            conjunto_limpa = str(linha["Conjunto"]).strip().lower()
-            casa_limpa = str(linha["Casa/Lote"]).strip().lower()
-            tel_limpo = ''.join(filter(str.isdigit, str(linha["Telefone (WhatsApp)"])))
-            
-            # Como salvamos tudo minúsculo, a comparação direta se torna 100% infalível
-            existe = db.query(MoradorDB).filter(
-                MoradorDB.nome_completo == nome_limpo,
-                MoradorDB.quadra == quadra_limpa,
-                MoradorDB.conjunto == conjunto_limpa,
-                MoradorDB.casa_lote == casa_limpa,
-                MoradorDB.telefone == tel_limpo
-            ).first()
-            
-            if existe:
-                contagem_duplicados += 1
-                continue
+        /* Estilo do botão de emergência do WhatsApp */
+        .btn-zap-emergencia {
+            background-color: #25d366; color: white; display: none; margin-top: 10px; 
+            text-align: center; text-decoration: none; padding: 12px; border-radius: 4px; 
+            font-weight: bold; font-size: 14px; animation: piscar 1.5s infinite;
+        }
+        @keyframes piscar {
+            0% { opacity: 0.8; } 50% { opacity: 1; box-shadow: 0 0 10px #25d366; } 100% { opacity: 0.8; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>CONDOMÍNIO HORIZONTAL - GESTÃO DE ENCOMENDAS</h1>
+        <p>Portaria Digital e Controle de Entregas</p>
+    </header>
+
+    <div class="grid">
+        <div>
+            <div class="card">
+                <h2>➕ Cadastrar Morador Manualmente</h2>
+                <div class="form-group">
+                    <label>Nome Completo:</label>
+                    <input type="text" id="manualNome" placeholder="Ex: João da Silva">
+                </div>
+                <div class="row-inputs form-group">
+                    <div>
+                        <label>Quadra (Qd):</label>
+                        <input type="text" id="manualQuadra" placeholder="Ex: 04">
+                    </div>
+                    <div>
+                        <label>Conjunto (Conj):</label>
+                        <input type="text" id="manualConjunto" placeholder="Ex: B">
+                    </div>
+                    <div>
+                        <label>Casa / Lote:</label>
+                        <input type="text" id="manualCasa" placeholder="Ex: 15">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Telefone (WhatsApp):</label>
+                    <input type="text" id="manualTelefone" placeholder="Ex: 11999998888">
+                </div>
+                <button onclick="cadastrarMoradorManual()" class="btn-success w-100">Salvar Novo Morador</button>
+            </div>
+
+            <div class="card">
+                <h2>📊 Importar via Planilha Excel</h2>
+                <div class="form-group">
+                    <label>Selecione o arquivo (.xlsx):</label>
+                    <input type="file" id="arquivoExcel" accept=".xlsx, .xls">
+                </div>
+                <button onclick="enviarExcel()" class="w-100">Carregar Lista de Moradores</button>
+            </div>
+
+            <div class="card">
+                <h2>📦 Registrar Nova Encomenda</h2>
+                <div class="form-group">
+                    <label>Código de Rastreio:</label>
+                    <input type="text" id="rastreio" placeholder="Bipe o código de barras...">
+                </div>
+                <div class="form-group">
+                    <label>Buscar e Selecionar Destinatário:</label>
+                    <input type="text" id="inputMoradorBusca" list="listaMoradoresDatalist" placeholder="Digite o nome ou endereço para filtrar..." autocomplete="off">
+                    <datalist id="listaMoradoresDatalist"></datalist>
+                </div>
+                <div class="form-group">
+                    <label>Descrição / Tipo (Opcional):</label>
+                    <input type="text" id="descricao" placeholder="Ex: Caixa, Envelope...">
+                </div>
+                <button onclick="registrarEncomenda()" class="w-100">Notificar e Salvar</button>
                 
-            novo_morador = MoradorDB(
-                nome_completo=nome_limpo,
-                quadra=quadra_limpa,
-                conjunto=conjunto_limpa,
-                casa_lote=casa_limpa,
-                telefone=tel_limpo
-            )
-            db.add(novo_morador)
-            contagem_novos += 1
+                <a id="btnZapLink" href="#" target="_blank" class="btn-zap-emergencia">⚠️ Clique aqui para Enviar o WhatsApp</a>
+            </div>
+        </div>
+
+        <div>
+            <div class="card" style="min-height: 400px;">
+                <h2>📦 Encomendas Aguardando Retirada</h2>
+                <table id="tabelaEncomendas">
+                    <thead>
+                        <tr>
+                            <th>Morador / Endereço</th>
+                            <th>Código</th>
+                            <th>Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div class="card" style="max-height: 350px; overflow-y: auto;">
+                <h2>👥 Moradores Cadastrados no Sistema</h2>
+                <table id="tabelaGerenciarMoradores">
+                    <thead>
+                        <tr>
+                            <th>Nome</th>
+                            <th>Endereço</th>
+                            <th>Remover</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_URL = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
+        ? "http://127.0.0.1:8000"
+        : window.location.origin;
+
+    let mapaMoradoresLocais = [];
+
+    async function cadastrarMoradorManual() {
+        const nome = document.getElementById('manualNome').value;
+        const quadra = document.getElementById('manualQuadra').value;
+        const conjunto = document.getElementById('manualConjunto').value;
+        const casa = document.getElementById('manualCasa').value;
+        const telefone = document.getElementById('manualTelefone').value;
+
+        if (!nome || !casa || !telefone) { alert("Por favor, preencha Nome, Casa e Telefone!"); return; }
+        const dados = { nome_completo: nome, quadra: quadra, conjunto: conjunto, casa_lote: casa, telefone: telefone };
+
+        try {
+            const response = await fetch(`${API_URL}/moradores/cadastrar-manual`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(dados)
+            });
+            if (response.ok) {
+                document.getElementById('manualNome').value = "";
+                document.getElementById('manualQuadra').value = "";
+                document.getElementById('manualConjunto').value = "";
+                document.getElementById('manualCasa').value = "";
+                document.getElementById('manualTelefone').value = "";
+                atualizarListaMoradores();
+            } else {
+                const err = await response.json();
+                alert(err.detail);
+            }
+        } catch (error) { alert("Erro de conexão."); }
+    }
+
+    async function enviarExcel() {
+        const fileInput = document.getElementById('arquivoExcel');
+        if (!fileInput.files[0]) { alert("Selecione um arquivo Excel!"); return; }
+        const formData = new FormData();
+        formData.append("file", fileInput.files[0]);
+
+        try {
+            const response = await fetch(`${API_URL}/moradores/importar-excel`, { method: 'POST', body: formData });
+            const dados = await response.json();
+            if (response.ok) { alert(dados.mensagem); atualizarListaMoradores(); } else { alert("Erro: " + dados.detail); }
+        } catch (error) { alert("Erro de conexão."); }
+    }
+
+    async function atualizarListaMoradores() {
+        try {
+            const response = await fetch(`${API_URL}/moradores`);
+            const moradores = await response.json();
+            mapaMoradoresLocais = moradores;
             
-        db.commit()
-        db.close()
-        
-        msg = f"Importação concluída! {contagem_novos} novos moradores adicionados."
-        if contagem_duplicados > 0:
-            msg += f" ({contagem_duplicados} registros duplicados foram ignorados)."
-            
-        return {"sucesso": True, "mensagem": msg}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
+            const datalist = document.getElementById('listaMoradoresDatalist');
+            datalist.innerHTML = '';
+            const tabelaMoradores = document.getElementById('tabelaGerenciarMoradores').getElementsByTagName('tbody')[0];
+            tabelaMoradores.innerHTML = "";
 
+            moradores.forEach(m => {
+                const textoEndereco = `Qd: ${m.quadra} | Conj: ${m.conjunto} | Casa: ${m.casa_lote}`;
+                const textoOpcaoCompleto = `${m.nome_completo} (${textoEndereco})`;
+                datalist.innerHTML += `<option value="${textoOpcaoCompleto}"></option>`;
+                
+                const novaLinha = tabelaMoradores.insertRow();
+                novaLinha.innerHTML = `<td><b>${m.nome_completo}</b></td><td>${textoEndereco}</td><td><button onclick="deletarMorador(${m.id})" class="btn-danger">Excluir</button></td>`;
+            });
+        } catch (error) { console.error("Erro ao listar moradores", error); }
+    }
 
-@app.post("/moradores/cadastrar-manual")
-def cadastrar_manual(morador: MoradorManualInput):
-    # 🌟 PADRONIZAÇÃO FORÇADA MANUAL: Transforma a digitação do porteiro em minúsculo
-    nome_limpo = morador.nome_completo.strip().lower()
-    quadra_limpa = morador.quadra.strip().lower()
-    conjunto_limpa = morador.conjunto.strip().lower()
-    casa_limpa = morador.casa_lote.strip().lower()
-    tel_limpo = ''.join(filter(str.isdigit, morador.telefone))
-    
-    db = SessionLocal()
-    
-    # Validação blindada pelo Python
-    existe = db.query(MoradorDB).filter(
-        MoradorDB.nome_completo == nome_limpo,
-        MoradorDB.quadra == quadra_limpa,
-        MoradorDB.conjunto == conjunto_limpa,
-        MoradorDB.casa_lote == casa_limpa,
-        MoradorDB.telefone == tel_limpo
-    ).first()
-    
-    if existe:
-        db.close()
-        raise HTTPException(status_code=400, detail="Atenção: Este morador com estes mesmos dados já está cadastrado no sistema!")
-        
-    novo = MoradorDB(
-        nome_completo=nome_limpo,
-        quadra=quadra_limpa,
-        conjunto=conjunto_limpa,
-        casa_lote=casa_limpa,
-        telefone=tel_limpo
-    )
-    db.add(novo)
-    db.commit()
-    db.close()
-    return {"sucesso": True, "mensagem": "Morador cadastrado na nuvem!"}
+    async function deletarMorador(id) {
+        if (!confirm("Tem certeza que deseja remover este morador?")) return;
+        try {
+            const response = await fetch(`${API_URL}/moradores/${id}`, { method: 'DELETE' });
+            if (response.ok) { atualizarListaMoradores(); }
+        } catch (error) { alert("Erro ao deletar morador."); }
+    }
 
+    // 🌟 REVISÃO DA FUNÇÃO DE REGISTRO COM PROTOCOLO SEGURO DE POP-UP
+    async function registrarEncomenda() {
+        // Esconde o botão de emergência anterior se houver
+        document.getElementById('btnZapLink').style.display = 'none';
 
-@app.get("/moradores")
-def listar_moradores():
-    db = SessionLocal()
-    linhas = db.query(MoradorDB).all()
-    db.close()
-    # 🌟 Toque de mestre: Ao exibir na tela do porteiro, usamos .title() e .upper() para o visual ficar bonito e legível!
-    return [{
-        "id": l.id, 
-        "nome_completo": l.nome_completo.title(),  # Transforma "maria da silva" em "Maria Da Silva"
-        "quadra": l.quadra.upper(), 
-        "conjunto": l.conjunto.upper(), 
-        "casa_lote": l.casa_lote.upper(), 
-        "telefone": l.telefone
-    } for l in linhas]
+        const textoDigitado = document.getElementById('inputMoradorBusca').value;
+        const codigoRastreio = document.getElementById('rastreio').value;
+        const desc = document.getElementById('descricao').value;
 
+        if (!textoDigitado || !codigoRastreio) { alert("Bipe o código e selecione um morador válido!"); return; }
 
-@app.delete("/moradores/{morador_id}")
-def deletar_morador(morador_id: int):
-    db = SessionLocal()
-    morador = db.query(MoradorDB).filter(MoradorDB.id == morador_id).first()
-    if morador:
-        db.delete(morador)
-        db.commit()
-    db.close()
-    return {"sucesso": True, "mensagem": "Morador removido!"}
+        const moradorEncontrado = mapaMoradoresLocais.find(m => {
+            const textoEndereco = `Qd: ${m.quadra} | Conj: ${m.conjunto} | Casa: ${m.casa_lote}`;
+            const textoOpcaoCompleto = `${m.nome_completo} (${textoEndereco})`;
+            return textoOpcaoCompleto.toLowerCase() === textoDigitado.toLowerCase();
+        });
 
+        if (!moradorEncontrado) { alert("Morador não encontrado na lista."); return; }
+        const dadosEncomenda = { morador_id: parseInt(moradorEncontrado.id), codigo_rastreio: codigoRastreio, descricao: desc };
 
-@app.post("/encomendas/registrar")
-def registrar_encomenda(encomenda: EncomendaInput):
-    db = SessionLocal()
-    morador = db.query(MoradorDB).filter(MoradorDB.id == encomenda.morador_id).first()
-    
-    if not morador:
-        db.close()
-        raise HTTPException(status_code=404, detail="Morador não encontrado.")
-    
-    # Deixa o texto formatado bonito para a etiqueta/mensagem
-    nome_bonito = morador.nome_completo.title()
-    endereco_completo = f"Qd. {morador.quadra.upper()} - Cj. {morador.conjunto.upper()} - Casa {morador.casa_lote.upper()}"
-    pin_gerado = str(random.randint(1000, 9999))
-    
-    nova_encomenda = EncomendaDB(
-        morador_id=encomenda.morador_id,
-        nome_morador=nome_bonito,
-        endereco=endereco_completo,
-        codigo_rastreio=encomenda.codigo_rastreio,
-        descricao=encomenda.descricao,
-        status="PENDENTE",
-        pin_retirada=pin_gerado
-    )
-    db.add(nova_encomenda)
-    db.commit()
-    db.refresh(nova_encomenda)
-    
-    texto_whatsapp = (
-        f"Olá, {nome_bonito}! 📦\n\n"
-        f"Informamos que uma nova encomenda chegou para você e já está disponível para retirada na portaria.\n\n"
-        f"🔹 Endereço: {endereco_completo}\n"
-        f"🔹 Identificação/Rastreio: {encomenda.codigo_rastreio}\n\n"
-        f"⚠️ CÓDIGO DE RETIRADA (PIN): {pin_gerado}\n"
-        f"Por gentileza, informe este código ao porteiro e assine o livro de protocolo no ato da retirada.\n\n"
-        f"Atenciosamente,\nAdministração do Condomínio"
-    )
-    
-    tel_morador = morador.telefone
-    db.close()
-    return {"sucesso": True, "encomenda_id": nova_encomenda.id, "telefone": tel_morador, "mensagem_texto": texto_whatsapp}
+        try {
+            const response = await fetch(`${API_URL}/encomendas/registrar`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(dadosEncomenda)
+            });
+            const resultado = await response.json();
 
+            if (response.ok) {
+                const telefoneComCodigoPais = "55" + resultado.telefone;
+                const textoCodificado = encodeURIComponent(resultado.mensagem_texto);
+                const urlWhatsapp = `https://web.whatsapp.com/send?phone=${telefoneComCodigoPais}&text=${textoCodificado}`;
+                
+                // 1. Configura o link no botão reserva de emergência por segurança
+                const btnEmergencia = document.getElementById('btnZapLink');
+                btnEmergencia.href = urlWhatsapp;
 
-@app.post("/encomendas/{encomenda_id}/baixa")
-def dar_baixa_encomenda(encomenda_id: int):
-    db = SessionLocal()
-    encomenda = db.query(EncomendaDB).filter(EncomendaDB.id == encomenda_id).first()
-    if encomenda:
-        encomenda.status = "ENTREGUE"
-        db.commit()
-    db.close()
-    return {"sucesso": True, "mensagem": "Baixa registrada!"}
+                // 2. Tenta abrir a nova aba contornando o bloqueador
+                const novaAba = window.open(urlWhatsapp, '_blank');
+                
+                // Se o navegador bloqueou o pop-up, o objeto 'novaAba' retorna nulo ou travado
+                if (!novaAba || novaAba.closed || typeof novaAba.closed == 'undefined') {
+                    // Mostra o botão piscando pro porteiro clicar manualmente
+                    btnEmergencia.style.display = 'block';
+                }
 
+                atualizarTabelaEncomendas();
 
-@app.get("/encomendas/pendentes")
-def listar_pendentes():
-    db = SessionLocal()
-    linhas = db.query(EncomendaDB).filter(EncomendaDB.status == "PENDENTE").all()
-    db.close()
-    return [{
-        "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
-        "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
-        "descricao": l.descricao, "status": l.status, "pin_retirada": l.pin_retirada
-    } for l in linhas]
+                // Limpa os campos
+                document.getElementById('inputMoradorBusca').value = "";
+                document.getElementById('rastreio').value = "";
+                document.getElementById('descricao').value = "";
+                document.getElementById('rastreio').focus(); 
+            }
+        } catch (error) { alert("Erro de comunicação com o servidor."); }
+    }
+
+    async function atualizarTabelaEncomendas() {
+        try {
+            const response = await fetch(`${API_URL}/encomendas/pendentes`);
+            const encomendas = await response.json();
+            const tabela = document.getElementById('tabelaEncomendas').getElementsByTagName('tbody')[0];
+            tabela.innerHTML = "";
+
+            encomendas.forEach(e => {
+                const novaLinha = tabela.insertRow();
+                novaLinha.innerHTML = `
+                    <td>
+                        <b>${e.nome_morador}</b><br><small>${e.endereco}</small><br>
+                        <span style="background-color: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-top: 4px; display: inline-block;">
+                            PIN do Caderno: ${e.pin_retirada}
+                        </span>
+                    </td>
+                    <td><code>${e.codigo_rastreio}</code></td>
+                    <td><button onclick="darBaixaEncomenda(${e.id})" class="btn-baixa">Dar Baixa</button></td>
+                `;
+            });
+        } catch (error) { console.error("Erro ao carregar encomendas", error); }
+    }
+
+    async function darBaixaEncomenda(id) {
+        try {
+            const response = await fetch(`${API_URL}/encomendas/${id}/baixa`, { method: 'POST' });
+            if (response.ok) { atualizarTabelaEncomendas(); }
+        } catch (error) { alert("Erro de conexão ao dar baixa."); }
+    }
+
+    document.getElementById('rastreio').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); document.getElementById('inputMoradorBusca').focus(); }
+    });
+
+    atualizarListaMoradores();
+    atualizarTabelaEncomendas();
+</script>
+
+</body>
+</html>
