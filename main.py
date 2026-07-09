@@ -10,7 +10,7 @@ import random
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-app = FastAPI(title="Sistema de Encomendas - Correção de Comunicação")
+app = FastAPI(title="Sistema de Encomendas - Correção de Sessão SQL")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +26,9 @@ if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# 🌟 CORREÇÃO CRUCIAL: expire_on_commit=False impede que os dados sumam após o commit/close
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
 Base = declarative_base()
 
 class MoradorDB(Base):
@@ -208,8 +210,10 @@ def registrar_encomenda(encomenda: EncomendaInput):
         db.close()
         raise HTTPException(status_code=404, detail="Morador não encontrado.")
     
+    # Captura os dados antes de qualquer outra ação para não gerar o erro f405
     nome_bonito = morador.nome_completo.title()
     endereco_completo = f"Qd. {morador.quadra.upper()} - Cj. {morador.conjunto.upper()} - Casa {morador.casa_lote.upper()}"
+    tel_morador = morador.telefone
     pin_gerado = str(random.randint(1000, 9999))
     
     nova_encomenda = EncomendaDB(
@@ -223,7 +227,6 @@ def registrar_encomenda(encomenda: EncomendaInput):
     )
     db.add(nova_encomenda)
     db.commit()
-    db.refresh(nova_encomenda)
     
     texto_whatsapp = (
         f"Olá, {nome_bonito}! 📦\n\n"
@@ -235,7 +238,7 @@ def registrar_encomenda(encomenda: EncomendaInput):
         f"Atenciosamente,\nAdministração do Condomínio"
     )
     
-    tel_morador = morador.telefone
+    # 🌟 CORREÇÃO: Fecha o banco por último, garantindo que o retorno seja montado perfeitamente
     db.close()
     return {"sucesso": True, "encomenda_id": nova_encomenda.id, "telefone": tel_morador, "mensagem_texto": texto_whatsapp}
 
