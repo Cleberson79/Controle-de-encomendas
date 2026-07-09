@@ -8,9 +8,9 @@ import io
 import os
 import random
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker, make_transient
 
-app = FastAPI(title="Sistema de Encomendas - Correção Definitiva de Escopo")
+app = FastAPI(title="Sistema de Encomendas - Isolamento Total de Objetos")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,7 +41,7 @@ class MoradorDB(Base):
 class EncomendaDB(Base):
     __tablename__ = "encomendas"
     id = Column(Integer, primary_key=True, index=True)
-    morador_id = Column(Integer, ForeignKey("moradores.id"))
+    morador_id = Column(Integer)  # Removido o ForeignKey rígido para evitar travas de sessão
     nome_morador = Column(String)
     endereco = Column(String)
     codigo_rastreio = Column(String)
@@ -208,17 +208,21 @@ def registrar_encomenda(encomenda: EncomendaInput):
         db.close()
         raise HTTPException(status_code=404, detail="Morador não encontrado.")
     
-    # 🌟 EXTRAÇÃO DIRETAMENTE EM STRINGS PURAS DO PYTHON (Garante imunidade ao erro f405)
+    # 🌟 O SEGREDO DO SUCESSO: Desconecta o objeto morador do banco completamente
+    make_transient(morador)
+    db.close()  # Fecha a sessão imediatamente! O morador agora é um objeto Python livre.
+    
     nome_morador_puro = str(morador.nome_completo).title()
     quadra_pura = str(morador.quadra).upper()
-    conjunto_puro = str(morador.conjunto).upper()
+    conjunto_pura = str(morador.conjunto).upper()
     casa_pura = str(morador.casa_lote).upper()
     tel_morador_puro = str(morador.telefone)
     
-    endereco_completo_puro = f"Qd. {quadra_pura} - Cj. {conjunto_puro} - Casa {casa_pura}"
+    endereco_completo_puro = f"Qd. {quadra_pura} - Cj. {conjunto_pura} - Casa {casa_pura}"
     pin_gerado = str(random.randint(1000, 9999))
     
-    # Criamos a encomenda usando as variáveis puras extraídas
+    # Abre uma nova sessão rápida apenas para gravar a encomenda
+    db_salvar = SessionLocal()
     nova_encomenda = EncomendaDB(
         morador_id=encomenda.morador_id,
         nome_morador=nome_morador_puro,
@@ -228,14 +232,11 @@ def registrar_encomenda(encomenda: EncomendaInput):
         status="PENDENTE",
         pin_retirada=pin_gerado
     )
-    db.add(nova_encomenda)
-    db.commit()
-    
-    # Guardamos o ID gerado antes de fechar a sessão
+    db_salvar.add(nova_encomenda)
+    db_salvar.commit()
     nova_encomenda_id = nova_encomenda.id
-    db.close()
+    db_salvar.close()
     
-    # Montamos o texto usando apenas as strings locais que o Python guardou
     texto_whatsapp = (
         f"Olá, {nome_morador_puro}! 📦\n\n"
         f"Informamos que uma nova encomenda chegou para você e já está disponível para retirada na portaria.\n\n"
