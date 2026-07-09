@@ -10,7 +10,7 @@ import random
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-app = FastAPI(title="Sistema de Encomendas - Bloqueio de Duplicidade Definitivo")
+app = FastAPI(title="Sistema de Encomendas - Correção de Comunicação")
 
 app.add_middleware(
     CORSMiddleware,
@@ -243,7 +243,7 @@ def registrar_encomenda(encomenda: EncomendaInput):
 @app.post("/encomendas/{encomenda_id}/baixa")
 def dar_baixa_encomenda(encomenda_id: int):
     db = SessionLocal()
-    encomenda = db.query(EncomendaDB).filter(EncomendaDB.id == townhouse_id).first() if 'townhouse_id' in locals() else db.query(EncomendaDB).filter(EncomendaDB.id == encomenda_id).first()
+    encomenda = db.query(EncomendaDB).filter(EncomendaDB.id == encomenda_id).first()
     if encomenda:
         encomenda.status = "ENTREGUE"
         db.commit()
@@ -260,4 +260,4 @@ def listar_pendentes():
         "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
         "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
         "descricao": l.descricao, "status": l.status, "pin_retirada": l.pin_retirada
-    } for l in linhas]  # <--- TOTALMENTE CORRIGIDO PARA 'linhas'
+    } for l in linhas]
