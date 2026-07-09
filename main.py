@@ -270,7 +270,7 @@ def listar_pendentes():
         "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
         "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
         "descricao": l.descricao, "status": l.status, "pin_retirada": l.pin_retirada
-    } for l in lines]
+    } for l in linhas]
 
 
 @app.get("/encomendas/historico")
