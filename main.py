@@ -10,7 +10,7 @@ import random
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-app = FastAPI(title="Sistema de Encomendas - Correção de Sessão SQL")
+app = FastAPI(title="Sistema de Encomendas - Correção Definitiva de Escopo")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,8 +26,6 @@ if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(DATABASE_URL)
-
-# 🌟 CORREÇÃO CRUCIAL: expire_on_commit=False impede que os dados sumam após o commit/close
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
 Base = declarative_base()
 
@@ -99,12 +97,12 @@ async def importar_excel(file: UploadFile = File(...)):
         contagem_novos = 0
         contagem_duplicados = 0
         
-        for _, linha in df.iterrows():
-            nome_limpo = str(linha["Nome Completo"]).strip().lower()
-            quadra_limpa = str(linha["Quadra"]).strip().lower()
-            conjunto_limpa = str(linha["Conjunto"]).strip().lower()
-            casa_limpa = str(linha["Casa/Lote"]).strip().lower()
-            tel_limpo = ''.join(filter(str.isdigit, str(linha["Telefone (WhatsApp)"])))
+        for _, tabular_linha in df.iterrows():
+            nome_limpo = str(tabular_linha["Nome Completo"]).strip().lower()
+            quadra_limpa = str(tabular_linha["Quadra"]).strip().lower()
+            conjunto_limpa = str(tabular_linha["Conjunto"]).strip().lower()
+            casa_limpa = str(tabular_linha["Casa/Lote"]).strip().lower()
+            tel_limpo = ''.join(filter(str.isdigit, str(tabular_linha["Telefone (WhatsApp)"])))
             
             existe = db.query(MoradorDB).filter(
                 MoradorDB.nome_completo == nome_limpo,
@@ -210,16 +208,21 @@ def registrar_encomenda(encomenda: EncomendaInput):
         db.close()
         raise HTTPException(status_code=404, detail="Morador não encontrado.")
     
-    # Captura os dados antes de qualquer outra ação para não gerar o erro f405
-    nome_bonito = morador.nome_completo.title()
-    endereco_completo = f"Qd. {morador.quadra.upper()} - Cj. {morador.conjunto.upper()} - Casa {morador.casa_lote.upper()}"
-    tel_morador = morador.telefone
+    # 🌟 EXTRAÇÃO DIRETAMENTE EM STRINGS PURAS DO PYTHON (Garante imunidade ao erro f405)
+    nome_morador_puro = str(morador.nome_completo).title()
+    quadra_pura = str(morador.quadra).upper()
+    conjunto_puro = str(morador.conjunto).upper()
+    casa_pura = str(morador.casa_lote).upper()
+    tel_morador_puro = str(morador.telefone)
+    
+    endereco_completo_puro = f"Qd. {quadra_pura} - Cj. {conjunto_puro} - Casa {casa_pura}"
     pin_gerado = str(random.randint(1000, 9999))
     
+    # Criamos a encomenda usando as variáveis puras extraídas
     nova_encomenda = EncomendaDB(
         morador_id=encomenda.morador_id,
-        nome_morador=nome_bonito,
-        endereco=endereco_completo,
+        nome_morador=nome_morador_puro,
+        endereco=endereco_completo_puro,
         codigo_rastreio=encomenda.codigo_rastreio,
         descricao=encomenda.descricao,
         status="PENDENTE",
@@ -228,19 +231,27 @@ def registrar_encomenda(encomenda: EncomendaInput):
     db.add(nova_encomenda)
     db.commit()
     
+    # Guardamos o ID gerado antes de fechar a sessão
+    nova_encomenda_id = nova_encomenda.id
+    db.close()
+    
+    # Montamos o texto usando apenas as strings locais que o Python guardou
     texto_whatsapp = (
-        f"Olá, {nome_bonito}! 📦\n\n"
+        f"Olá, {nome_morador_puro}! 📦\n\n"
         f"Informamos que uma nova encomenda chegou para você e já está disponível para retirada na portaria.\n\n"
-        f"🔹 Endereço: {endereco_completo}\n"
+        f"🔹 Endereço: {endereco_completo_puro}\n"
         f"🔹 Identificação/Rastreio: {encomenda.codigo_rastreio}\n\n"
         f"⚠️ CÓDIGO DE RETIRADA (PIN): {pin_gerado}\n"
         f"Por gentileza, informe este código ao porteiro e assine o livro de protocolo no ato da retirada.\n\n"
         f"Atenciosamente,\nAdministração do Condomínio"
     )
     
-    # 🌟 CORREÇÃO: Fecha o banco por último, garantindo que o retorno seja montado perfeitamente
-    db.close()
-    return {"sucesso": True, "encomenda_id": nova_encomenda.id, "telefone": tel_morador, "mensagem_texto": texto_whatsapp}
+    return {
+        "sucesso": True, 
+        "encomenda_id": nova_encomenda_id, 
+        "telefone": tel_morador_puro, 
+        "mensagem_texto": texto_whatsapp
+    }
 
 
 @app.post("/encomendas/{encomenda_id}/baixa")
