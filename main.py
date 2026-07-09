@@ -49,7 +49,6 @@ class EncomendaDB(Base):
     descricao = Column(String)
     status = Column(String, default="PENDENTE")
     pin_retirada = Column(String)
-    # 🌟 NOVAS COLUNAS PARA AUDITORIA E TIMESTAMPS
     data_entrada = Column(DateTime, default=datetime.utcnow)
     data_entrega = Column(DateTime, nullable=True)
 
@@ -149,7 +148,7 @@ def cadastrar_manual(morador: MoradorManualInput):
         MoradorDB.quadra == quadra_limpa,
         MoradorDB.conjunto == conjunto_limpa,
         MoradorDB.casa_lote == casa_limpa,
-        MoradorDB.telefone == tel_limpo
+                MoradorDB.telefone == tel_limpo
     ).first()
     
     if existe:
@@ -225,7 +224,7 @@ def registrar_encomenda(encomenda: EncomendaInput):
         descricao=encomenda.descricao,
         status="PENDENTE",
         pin_retirada=pin_gerado,
-        data_entrada=datetime.now() # Captura o fuso local/servidor de entrada
+        data_entrada=datetime.now()
     )
     db_salvar.add(nova_encomenda)
     db_salvar.commit()
@@ -253,10 +252,10 @@ def registrar_encomenda(encomenda: EncomendaInput):
 @app.post("/encomendas/{encomenda_id}/baixa")
 def dar_baixa_encomenda(encomenda_id: int):
     db = SessionLocal()
-    encomenda = db.query(EncomendaDB).filter(EncomendaDB.id ==_encomenda_id).first()
+    encomenda = db.query(EncomendaDB).filter(EncomendaDB.id == encomenda_id).first()
     if encomenda:
         encomenda.status = "ENTREGUE"
-        encomenda.data_entrega = datetime.now() # Salva o momento exato da retirada
+        encomenda.data_entrega = datetime.now()
         db.commit()
     db.close()
     return {"sucesso": True, "mensagem": "Baixa registrada!"}
@@ -274,7 +273,6 @@ def listar_pendentes():
     } for l in lines]
 
 
-# 🌟 NOVA ROTA: Retorna o histórico completo (últimas 150 modificadas)
 @app.get("/encomendas/historico")
 def obter_historico():
     db = SessionLocal()
@@ -288,16 +286,14 @@ def obter_historico():
         "status": l.status,
         "data_entrada": l.data_entrada.strftime("%d/%m/%Y %H:%M") if l.data_entrada else "N/A",
         "data_entrega": l.data_entrega.strftime("%d/%m/%Y %H:%M") if l.data_entrega else "Aguardando"
-    } for l in linhas]
+    } for l in lines]
 
 
-# 🌟 NOVA ROTA: Executa o Backup Seguro e limpa do banco o que tem +30 dias
 @app.post("/encomendas/backup-limpeza")
 def exportar_e_limpar_banco():
     db = SessionLocal()
     limite_tempo = datetime.now() - timedelta(days=30)
     
-    # Busca registros entregues há mais de 30 dias
     registros_antigos = db.query(EncomendaDB).filter(
         EncomendaDB.status == "ENTREGUE",
         EncomendaDB.data_entrega < limite_tempo
@@ -307,7 +303,6 @@ def exportar_e_limpar_banco():
         db.close()
         raise HTTPException(status_code=400, detail="Nenhum registro entregue com mais de 30 dias foi encontrado para limpeza.")
     
-    # Monta uma lista com formato estruturado
     dados_exportar = []
     for reg in registros_antigos:
         dados_exportar.append({
@@ -321,14 +316,12 @@ def exportar_e_limpar_banco():
             "Data Entrega": reg.data_entrega.strftime("%d/%m/%Y %H:%M") if reg.data_entrega else ""
         })
         
-    # Transforma em DataFrame do Pandas e cria a planilha em memória (io.BytesIO)
     df = pd.DataFrame(dados_exportar)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Histórico_Expurgado')
     output.seek(0)
     
-    # Remove fisicamente as linhas antigas da nuvem Neon
     db.query(EncomendaDB).filter(
         EncomendaDB.status == "ENTREGUE",
         EncomendaDB.data_entrega < limite_tempo
