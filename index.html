@@ -27,6 +27,15 @@
         table { width: 100%; border-collapse: collapse; margin-top: 10px; background: white; }
         th, td { padding: 10px; text-align: left; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
         th { background-color: #f8fafc; color: #1f4e78; }
+        
+        .btn-zap-emergencia {
+            background-color: #25d366; color: white; display: none; margin-top: 10px; 
+            text-align: center; text-decoration: none; padding: 12px; border-radius: 4px; 
+            font-weight: bold; font-size: 14px; animation: piscar 1.5s infinite;
+        }
+        @keyframes piscar {
+            0% { opacity: 0.8; } 50% { opacity: 1; box-shadow: 0 0 10px #25d366; } 100% { opacity: 0.8; }
+        }
     </style>
 </head>
 <body>
@@ -84,14 +93,15 @@
                 <div class="form-group">
                     <label>Buscar e Selecionar Destinatário:</label>
                     <input type="text" id="inputMoradorBusca" list="listaMoradoresDatalist" placeholder="Digite o nome ou endereço para filtrar..." autocomplete="off">
-                    <datalist id="listaMoradoresDatalist">
-                        </datalist>
+                    <datalist id="listaMoradoresDatalist"></datalist>
                 </div>
                 <div class="form-group">
                     <label>Descrição / Tipo (Opcional):</label>
                     <input type="text" id="descricao" placeholder="Ex: Caixa, Envelope...">
                 </div>
                 <button onclick="registrarEncomenda()" class="w-100">Notificar e Salvar</button>
+                
+                <a id="btnZapLink" href="#" target="_blank" class="btn-zap-emergencia">⚠️ Clique aqui para Enviar o WhatsApp</a>
             </div>
         </div>
 
@@ -106,8 +116,7 @@
                             <th>Ação</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        </tbody>
+                    <tbody></tbody>
                 </table>
             </div>
 
@@ -121,8 +130,7 @@
                             <th>Remover</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        </tbody>
+                    <tbody></tbody>
                 </table>
             </div>
         </div>
@@ -130,15 +138,12 @@
 </div>
 
 <script>
-    // Configuração inteligente de endereço do Servidor
     const API_URL = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
         ? "http://127.0.0.1:8000"
         : window.location.origin;
 
-    // Array global para ajudar o buscador a traduzir o texto selecionado em ID interno
     let mapaMoradoresLocais = [];
 
-    // 1. Função: Cadastrar Individual/Manual
     async function cadastrarMoradorManual() {
         const nome = document.getElementById('manualNome').value;
         const quadra = document.getElementById('manualQuadra').value;
@@ -146,11 +151,7 @@
         const casa = document.getElementById('manualCasa').value;
         const telefone = document.getElementById('manualTelefone').value;
 
-        if (!nome || !casa || !telefone) {
-            alert("Por favor, preencha Nome, Casa e Telefone!");
-            return;
-        }
-
+        if (!nome || !casa || !telefone) { alert("Por favor, preencha Nome, Casa e Telefone!"); return; }
         const dados = { nome_completo: nome, quadra: quadra, conjunto: conjunto, casa_lote: casa, telefone: telefone };
 
         try {
@@ -166,93 +167,72 @@
                 document.getElementById('manualCasa').value = "";
                 document.getElementById('manualTelefone').value = "";
                 atualizarListaMoradores();
+            } else {
+                const err = await response.json();
+                alert(err.detail);
             }
         } catch (error) { alert("Erro de conexão."); }
     }
 
-    // 2. Função: Importar Planilha Excel
     async function enviarExcel() {
         const fileInput = document.getElementById('arquivoExcel');
         if (!fileInput.files[0]) { alert("Selecione um arquivo Excel!"); return; }
-
         const formData = new FormData();
         formData.append("file", fileInput.files[0]);
 
         try {
             const response = await fetch(`${API_URL}/moradores/importar-excel`, { method: 'POST', body: formData });
             const dados = await response.json();
-            if (response.ok) {
-                alert(dados.mensagem);
-                atualizarListaMoradores();
-            } else { alert("Erro: " + dados.detail); }
+            if (response.ok) { alert(dados.mensagem); atualizarListaMoradores(); } else { alert("Erro: " + dados.detail); }
         } catch (error) { alert("Erro de conexão."); }
     }
 
-    // 3. Função: Atualizar a listagem e alimentar o filtro inteligente (Datalist)
     async function atualizarListaMoradores() {
         try {
             const response = await fetch(`${API_URL}/moradores`);
             const moradores = await response.json();
-            
-            // Salvamos no array global para uso posterior no registro da encomenda
             mapaMoradoresLocais = moradores;
             
             const datalist = document.getElementById('listaMoradoresDatalist');
             datalist.innerHTML = '';
-            
             const tabelaMoradores = document.getElementById('tabelaGerenciarMoradores').getElementsByTagName('tbody')[0];
             tabelaMoradores.innerHTML = "";
 
             moradores.forEach(m => {
                 const textoEndereco = `Qd: ${m.quadra} | Conj: ${m.conjunto} | Casa: ${m.casa_lote}`;
                 const textoOpcaoCompleto = `${m.nome_completo} (${textoEndereco})`;
-                
-                // 🌟 Alimenta o mecanismo de busca nativa do navegador
                 datalist.innerHTML += `<option value="${textoOpcaoCompleto}"></option>`;
                 
-                // Alimenta a tabela de gerenciar
                 const novaLinha = tabelaMoradores.insertRow();
-                novaLinha.innerHTML = `
-                    <td><b>${m.nome_completo}</b></td>
-                    <td>${textoEndereco}</td>
-                    <td><button onclick="deletarMorador(${m.id})" class="btn-danger">Excluir</button></td>
-                `;
+                novaLinha.innerHTML = `<td><b>${m.nome_completo}</b></td><td>${textoEndereco}</td><td><button onclick="deletarMorador(${m.id})" class="btn-danger">Excluir</button></td>`;
             });
         } catch (error) { console.error("Erro ao listar moradores", error); }
     }
 
-    // 4. Função: Deletar morador do sistema
     async function deletarMorador(id) {
         if (!confirm("Tem certeza que deseja remover este morador?")) return;
-
         try {
             const response = await fetch(`${API_URL}/moradores/${id}`, { method: 'DELETE' });
-            if (response.ok) {
-                atualizarListaMoradores();
-            }
+            if (response.ok) { atualizarListaMoradores(); }
         } catch (error) { alert("Erro ao deletar morador."); }
     }
 
-    // 5. Função: Registrar encomenda usando a busca inteligente
     async function registrarEncomenda() {
+        document.getElementById('btnZapLink').style.display = 'none';
+
         const textoDigitado = document.getElementById('inputMoradorBusca').value;
         const codigoRastreio = document.getElementById('rastreio').value;
         const desc = document.getElementById('descricao').value;
 
         if (!textoDigitado || !codigoRastreio) { alert("Bipe o código e selecione um morador válido!"); return; }
 
-        // Mágica do Filtro: Descobrimos qual é o ID do morador com base no texto que o porteiro selecionou
         const moradorEncontrado = mapaMoradoresLocais.find(m => {
             const textoEndereco = `Qd: ${m.quadra} | Conj: ${m.conjunto} | Casa: ${m.casa_lote}`;
             const textoOpcaoCompleto = `${m.nome_completo} (${textoEndereco})`;
-            return textoOpcaoCompleto === textoDigitado;
+            return textoOpcaoCompleto.toLowerCase() === textoDigitado.toLowerCase();
         });
 
-        if (!moradorEncontrado) {
-            alert("Morador não encontrado na lista. Certifique-se de selecionar uma opção válida sugerida pelo campo.");
-            return;
-        }
-
+        if (!moradorEncontrado) { alert("Morador não encontrado na lista."); return; }
         const dadosEncomenda = { morador_id: parseInt(moradorEncontrado.id), codigo_rastreio: codigoRastreio, descricao: desc };
 
         try {
@@ -261,25 +241,36 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(dadosEncomenda)
             });
-            const resultado = await response.json();
-
+            
+            // 🌟 AJUSTE CRUCIAL DE LEITURA DA NOVA RESPOSTA DO SERVIDOR
             if (response.ok) {
-                const延telefoneComCodigoPais = "55" + resultado.telefone;
+                const resultado = await response.json();
+                const telefoneComCodigoPais = "55" + resultado.telefone;
                 const textoCodificado = encodeURIComponent(resultado.mensagem_texto);
-                window.open(`https://web.whatsapp.com/send?phone=${延telefoneComCodigoPais}&text=${textoCodificado}`, '_blank');
+                const urlWhatsapp = `https://web.whatsapp.com/send?phone=${telefoneComCodigoPais}&text=${textoCodificado}`;
                 
+                const btnEmergencia = document.getElementById('btnZapLink');
+                btnEmergencia.href = urlWhatsapp;
+
+                const novaAba = window.open(urlWhatsapp, '_blank');
+                if (!novaAba || novaAba.closed || typeof novaAba.closed == 'undefined') {
+                    btnEmergencia.style.display = 'block';
+                }
+
                 atualizarTabelaEncomendas();
 
-                // Limpa os campos para a próxima bipada
                 document.getElementById('inputMoradorBusca').value = "";
                 document.getElementById('rastreio').value = "";
                 document.getElementById('descricao').value = "";
                 document.getElementById('rastreio').focus(); 
+            } else {
+                alert("O servidor encontrou um problema ao salvar.");
             }
-        } catch (error) { alert("Erro de comunicação."); }
+        } catch (error) { 
+            alert("Erro ao processar os dados da tela."); 
+        }
     }
 
-    // 6. Função: Buscar e renderizar as encomendas pendentes vindas do Python
     async function atualizarTabelaEncomendas() {
         try {
             const response = await fetch(`${API_URL}/encomendas/pendentes`);
@@ -289,11 +280,9 @@
 
             encomendas.forEach(e => {
                 const novaLinha = tabela.insertRow();
-                // 🌟 Adicionamos uma tarja vermelha/laranja destacando o PIN para o caderno
                 novaLinha.innerHTML = `
                     <td>
-                        <b>${e.nome_morador}</b><br>
-                        <small>${e.endereco}</small><br>
+                        <b>${e.nome_morador}</b><br><small>${e.endereco}</small><br>
                         <span style="background-color: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-top: 4px; display: inline-block;">
                             PIN do Caderno: ${e.pin_retirada}
                         </span>
@@ -305,29 +294,17 @@
         } catch (error) { console.error("Erro ao carregar encomendas", error); }
     }
 
-    // 7. Função: Dar baixa na encomenda (Morador retirou)
     async function darBaixaEncomenda(id) {
         try {
-            const response = await fetch(`${API_URL}/encomendas/${id}/baixa`, {
-                method: 'POST'
-            });
-            if (response.ok) {
-                atualizarTabelaEncomendas(); 
-            } else {
-                alert("Erro ao processar baixa no servidor.");
-            }
+            const response = await fetch(`${API_URL}/encomendas/${id}/baixa`, { method: 'POST' });
+            if (response.ok) { atualizarTabelaEncomendas(); }
         } catch (error) { alert("Erro de conexão ao dar baixa."); }
     }
 
-    // Atalhos de teclado: Ao dar Enter no rastreio pula pro campo de busca de morador
     document.getElementById('rastreio').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            document.getElementById('inputMoradorBusca').focus();
-        }
+        if (e.key === 'Enter') { e.preventDefault(); document.getElementById('inputMoradorBusca').focus(); }
     });
 
-    // Inicialização automática das listas
     atualizarListaMoradores();
     atualizarTabelaEncomendas();
 </script>
