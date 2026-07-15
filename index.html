@@ -14,6 +14,19 @@
         .row-inputs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 13px; }
         input[type="text"], input[type="search"], select { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; font-size: 15px; }
+        
+        /* 🌟 Estilo especial para os novos campos de busca rápida */
+        .busca-rapida {
+            background-color: #f8fafc;
+            border: 2px solid #1f4e78;
+            margin-bottom: 12px;
+            font-weight: 500;
+        }
+        .busca-rapida::placeholder {
+            color: #64748b;
+            font-style: italic;
+        }
+
         button { background-color: #1f4e78; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; transition: background 0.2s; }
         button:hover { background-color: #153552; }
         .w-100 { width: 100%; padding: 12px; }
@@ -47,8 +60,8 @@
 
 <div class="container">
     <header>
-        <h1>CONDOMÍNIO RESIDENCIAL SÃO FRANCISCO</h1>
-        <p>Gestão e Controle de Encomendas</p>
+        <h1>CONDOMÍNIO HORIZONTAL - GESTÃO DE ENCOMENDAS</h1>
+        <p>Portaria Digital, Controle de Entregas e Auditoria</p>
     </header>
 
     <div class="grid">
@@ -116,6 +129,8 @@
         <div>
             <div class="card" style="min-height: 300px;">
                 <h2>📦 Encomendas Aguardando Retirada (Pendentes)</h2>
+                <input type="text" id="buscaPendente" onkeyup="filtrarTabelaPendentes()" class="busca-rapida" placeholder="🔍 Buscar por morador, casa, rastreio ou PIN...">
+                
                 <table id="tabelaEncomendas">
                     <thead>
                         <tr>
@@ -142,8 +157,10 @@
                 </table>
             </div>
 
-            <div class="card" style="max-height: 250px; overflow-y: auto;">
+            <div class="card" style="max-height: 300px; overflow-y: auto;">
                 <h2>👥 Moradores Cadastrados</h2>
+                <input type="text" id="buscaMorador" onkeyup="filtrarTabelaMoradores()" class="busca-rapida" placeholder="🔍 Buscar morador por nome ou endereço para excluir...">
+                
                 <table id="tabelaGerenciarMoradores">
                     <thead>
                         <tr>
@@ -165,6 +182,56 @@
         : window.location.origin;
 
     let mapaMoradoresLocais = [];
+
+    // 🌟 NOVA FUNÇÃO: Filtra a tabela de encomendas pendentes em tempo real
+    function filtrarTabelaPendentes() {
+        const input = document.getElementById("buscaPendente");
+        const filtro = input.value.toLowerCase();
+        const tabela = document.getElementById("tabelaEncomendas");
+        const linhas = tabela.getElementsByTagName("tr");
+
+        // Ignora o cabeçalho (i = 1)
+        for (let i = 1; i < linhas.length; i++) {
+            const colunaMorador = linhas[i].getElementsByTagName("td")[0];
+            const colunaCodigo = linhas[i].getElementsByTagName("td")[1];
+            
+            if (colunaMorador && colunaCodigo) {
+                const textoMorador = colunaMorador.textContent || colunaMorador.innerText;
+                const textoCodigo = colunaCodigo.textContent || colunaCodigo.innerText;
+                
+                if (textoMorador.toLowerCase().indexOf(filtro) > -1 || textoCodigo.toLowerCase().indexOf(filtro) > -1) {
+                    linhas[i].style.display = "";
+                } else {
+                    linhas[i].style.display = "none";
+                }
+            }       
+        }
+    }
+
+    // 🌟 NOVA FUNÇÃO: Filtra a lista de moradores cadastrados para exclusão em tempo real
+    function filtrarTabelaMoradores() {
+        const input = document.getElementById("buscaMorador");
+        const filtro = input.value.toLowerCase();
+        const tabela = document.getElementById("tabelaGerenciarMoradores");
+        const linhas = tabela.getElementsByTagName("tr");
+
+        // Ignora o cabeçalho (i = 1)
+        for (let i = 1; i < linhas.length; i++) {
+            const colunaNome = linhas[i].getElementsByTagName("td")[0];
+            const colunaEndereco = linhas[i].getElementsByTagName("td")[1];
+            
+            if (colunaNome && colunaEndereco) {
+                const textoNome = colunaNome.textContent || colunaNome.innerText;
+                const textoEndereco = colunaEndereco.textContent || colunaEndereco.innerText;
+                
+                if (textoNome.toLowerCase().indexOf(filtro) > -1 || textoEndereco.toLowerCase().indexOf(filtro) > -1) {
+                    linhas[i].style.display = "";
+                } else {
+                    linhas[i].style.display = "none";
+                }
+            }       
+        }
+    }
 
     async function cadastrarMoradorManual() {
         const nome = document.getElementById('manualNome').value;
@@ -227,6 +294,9 @@
                 const novaLinha = tabelaMoradores.insertRow();
                 novaLinha.innerHTML = `<td><b>${m.nome_completo}</b></td><td>${textoEndereco}</td><td><button onclick="deletarMorador(${m.id})" class="btn-danger">Excluir</button></td>`;
             });
+            
+            // Re-aplica filtro se houver algum termo no campo de busca de moradores
+            filtrarTabelaMoradores();
         } catch (error) { console.error("Erro ao listar moradores", error); }
     }
 
@@ -307,6 +377,9 @@
                     <td><button onclick="darBaixaEncomenda(${e.id})" class="btn-baixa">Dar Baixa</button></td>
                 `;
             });
+            
+            // Re-aplica filtro se houver algum termo no campo de busca de pendentes
+            filtrarTabelaPendentes();
         } catch (error) { console.error("Erro ao carregar encomendas", error); }
     }
 
@@ -352,7 +425,6 @@
             }
             
             if (response.ok) {
-                // 🌟 Captura o arquivo binário direto e força o download no navegador do usuário
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
