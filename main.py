@@ -1,17 +1,55 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel
-from typing import List, Optional
-from fastapi.middleware.cors import CORSMiddleware
-import pandas as pd
-import io
 import os
+import io
 import random
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, Column, Integer, String, DateTime
-from sqlalchemy.orm import declarative_base, sessionmaker, make_transient
+import urllib.request
+import urllib.parse
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 
-app = FastAPI(title="Sistema de Encomendas - Histórico e Backup Seguro")
+# Token do Robô do Telegram fornecido pelo usuário
+TELEGRAM_TOKEN = "8997167927:AAH_0Y7IcqCS-3pGRds28EbNsZUoDQVEIug"
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("A variável de ambiente DATABASE_URL não foi definida!")
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# ==================== MODELOS DO BANCO DE DADOS ====================
+
+class Morador(Base):
+    __tablename__ = "moradores"
+    id = Column(Integer, primary_key=True, index=True)
+    nome_completo = Column(String, nullable=False)
+    quadra = Column(String, nullable=True)
+    conjunto = Column(String, nullable=True)
+    casa_lote = Column(String, nullable=False)
+    # A coluna telefone agora armazena explicitamente o Chat ID do Telegram do morador
+    telefone = Column(String, nullable=False)
+    encomendas = relationship("Encomenda", back_populates="morador", cascade="all, delete-orphan")
+
+class Encomenda(Base):
+    __tablename__ = "encomendas"
+    id = Column(Integer, primary_key=True, index=True)
+    morador_id = Column(Integer, ForeignKey("moradores.id"), nullable=False)
+    codigo_rastreio = Column(String, nullable=False)
+    descricao = Column(String, nullable=True)
+    pin_retirada = Column(String, nullable=False)
+    status = Column(String, default="PENDENTE")
+    data_entrada = Column(DateTime, default=datetime.utcnow)
+    data_entrega = Column(DateTime, nullable=True)
+    morador = relationship("Morador", back_populates="encomendas")
+
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Portaria Digital Condomínio - Telegram Automatic")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,317 +59,246 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATABASE_URL = "postgresql://neondb_owner:npg_i0MgPWlm6UBK@ep-twilight-wildflower-ac9ra3lq-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require"
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# ==================== FUNÇÃO AUXILIAR DISPARO TELEGRAM ====================
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
-Base = declarative_base()
+def enviar_mensagem_telegram(chat_id: str, texto: str):
+    """Envia uma notificação direta e automatizada via API do Telegram"""
+    try:
+        texto_codificado = urllib.parse.quote(texto)
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={chat_id}&text={texto_codificado}&parse_mode=Markdown"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return response.read()
+    except Exception as e:
+        print(f"Erro ao disparar mensagem para o Telegram: {e}")
+        # Não trava a execução do endpoint para evitar falhas críticas de salvamento
+        return None
 
-class MoradorDB(Base):
-    __tablename__ = "moradores"
-    id = Column(Integer, primary_key=True, index=True)
-    nome_completo = Column(String)
-    quadra = Column(String)
-    conjunto = Column(String)
-    casa_lote = Column(String)
-    telefone = Column(String)
+# ==================== SCHEMAS PYDANTIC ====================
 
-class EncomendaDB(Base):
-    __tablename__ = "encomendas"
-    id = Column(Integer, primary_key=True, index=True)
-    morador_id = Column(Integer)
-    nome_morador = Column(String)
-    endereco = Column(String)
-    codigo_rastreio = Column(String)
-    descricao = Column(String)
-    status = Column(String, default="PENDENTE")
-    pin_retirada = Column(String)
-    data_entrada = Column(DateTime, default=datetime.utcnow)
-    data_entrega = Column(DateTime, nullable=True)
-
-Base.metadata.create_all(bind=engine)
-
-class MoradorManualInput(BaseModel):
+class MoradorManualCreate(BaseModel):
     nome_completo: str
-    quadra: str
-    conjunto: str
+    quadra: str = ""
+    conjunto: str = ""
     casa_lote: str
-    telefone: str
+    telefone: str  # Representa o Telegram Chat ID informado pelo operador
 
-class EncomendaInput(BaseModel):
+class EncomendaCreate(BaseModel):
     morador_id: int
     codigo_rastreio: str
-    descricao: Optional[str] = "Não informada"
+    descricao: str = ""
 
+# ==================== ROTAS DO SISTEMA ====================
 
-@app.get("/", response_class=HTMLResponse)
-def pagina_inicial():
-    caminho_index = os.path.join(os.path.dirname(__file__), "index.html")
-    if os.path.exists(caminho_index):
-        with open(caminho_index, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>Erro: Arquivo index.html não encontrado.</h1>"
-
-
-@app.post("/moradores/importar-excel")
-async def importar_excel(file: UploadFile = File(...)):
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Envie um arquivo Excel válido (.xlsx)")
-    try:
-        conteudo = await file.read()
-        df = pd.read_excel(io.BytesIO(conteudo))
-        colunas_esperadas = ["Nome Completo", "Quadra", "Conjunto", "Casa/Lote", "Telefone (WhatsApp)"]
-        for col in colunas_esperadas:
-            if col not in df.columns:
-                raise HTTPException(status_code=400, detail=f"Coluna ausente: {col}")
-        
-        db = SessionLocal()
-        contagem_novos = 0
-        contagem_duplicados = 0
-        
-        for _, tabular_linha in df.iterrows():
-            nome_limpo = str(tabular_linha["Nome Completo"]).strip().lower()
-            quadra_limpa = str(tabular_linha["Quadra"]).strip().lower()
-            conjunto_limpa = str(tabular_linha["Conjunto"]).strip().lower()
-            casa_limpa = str(tabular_linha["Casa/Lote"]).strip().lower()
-            tel_limpo = ''.join(filter(str.isdigit, str(tabular_linha["Telefone (WhatsApp)"])))
-            
-            existe = db.query(MoradorDB).filter(
-                MoradorDB.nome_completo == nome_limpo,
-                MoradorDB.quadra == quadra_limpa,
-                MoradorDB.conjunto == conjunto_limpa,
-                MoradorDB.casa_lote == casa_limpa,
-                MoradorDB.telefone == tel_limpo
-            ).first()
-            
-            if existe:
-                contagem_duplicados += 1
-                continue
-                
-            novo_morador = MoradorDB(
-                nome_completo=nome_limpo,
-                quadra=quadra_limpa,
-                conjunto=conjunto_limpa,
-                casa_lote=casa_limpa,
-                telefone=tel_limpo
-            )
-            db.add(novo_morador)
-            contagem_novos += 1
-            
-        db.commit()
-        db.close()
-        
-        msg = f"Importação concluída! {contagem_novos} novos moradores adicionados."
-        if contagem_duplicados > 0:
-            msg += f" ({contagem_duplicados} registros duplicados foram ignorados)."
-            
-        return {"sucesso": True, "mensagem": msg}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
-
+@app.get("/moradores")
+def listar_moradores(db: Session = Depends(get_db)):
+    moradores = db.query(Morador).order_by(Morador.nome_completo).all()
+    return moradores
 
 @app.post("/moradores/cadastrar-manual")
-def cadastrar_manual(morador: MoradorManualInput):
-    nome_limpo = morador.nome_completo.strip().lower()
-    quadra_limpa = morador.quadra.strip().lower()
-    conjunto_limpa = morador.conjunto.strip().lower()
-    casa_limpa = morador.casa_lote.strip().lower()
-    tel_limpo = ''.join(filter(str.isdigit, morador.telefone))
-    
-    db = SessionLocal()
-    
-    existe = db.query(MoradorDB).filter(
-        MoradorDB.nome_completo == nome_limpo,
-        MoradorDB.quadra == quadra_limpa,
-        MoradorDB.conjunto == conjunto_limpa,
-        MoradorDB.casa_lote == casa_limpa,
-                MoradorDB.telefone == tel_limpo
+def cadastrar_morador_manual(dados: MoradorManualCreate, db: Session = Depends(get_db)):
+    # Evita duplicidade simples de moradores idênticos
+    existente = db.query(Morador).filter(
+        Morador.nome_completo.ilike(dados.nome_completo.strip()),
+        Morador.casa_lote == dados.casa_lote.strip()
     ).first()
+    if existente:
+         raise HTTPException(status_code=400, detail="Morador já cadastrado para esta unidade!")
     
-    if existe:
-        db.close()
-        raise HTTPException(status_code=400, detail="Atenção: Este morador com estes mesmos dados já está cadastrado no sistema!")
-        
-    novo = MoradorDB(
-        nome_completo=nome_limpo,
-        quadra=quadra_limpa,
-        conjunto=conjunto_limpa,
-        casa_lote=casa_limpa,
-        telefone=tel_limpo
+    novo = Morador(
+        nome_completo=dados.nome_completo.strip(),
+        quadra=dados.quadra.strip(),
+        conjunto=dados.conjunto.strip(),
+        casa_lote=dados.casa_lote.strip(),
+        telefone=dados.telefone.strip()
     )
     db.add(novo)
     db.commit()
-    db.close()
-    return {"sucesso": True, "mensagem": "Morador cadastrado na nuvem!"}
-
-
-@app.get("/moradores")
-def listar_moradores():
-    db = SessionLocal()
-    linhas = db.query(MoradorDB).all()
-    db.close()
-    return [{
-        "id": l.id, 
-        "nome_completo": l.nome_completo.title(), 
-        "quadra": l.quadra.upper(), 
-        "conjunto": l.conjunto.upper(), 
-        "casa_lote": l.casa_lote.upper(), 
-        "telefone": l.telefone
-    } for l in linhas]
-
+    return {"mensagem": "Morador adicionado com sucesso!"}
 
 @app.delete("/moradores/{morador_id}")
-def deletar_morador(morador_id: int):
-    db = SessionLocal()
-    morador = db.query(MoradorDB).filter(MoradorDB.id == morador_id).first()
-    if morador:
-        db.delete(morador)
-        db.commit()
-    db.close()
-    return {"sucesso": True, "mensagem": "Morador removido!"}
+def deletar_morador(morador_id: int, db: Session = Depends(get_db)):
+    morador = db.query(Morador).filter(Morador.id == morador_id).first()
+    if not morador:
+        raise HTTPException(status_code=404, detail="Morador não localizado.")
+    db.delete(morador)
+    db.commit()
+    return {"mensagem": "Morador removido com sucesso!"}
 
+@app.post("/moradores/importar-excel")
+async def importar_excel_moradores(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    import pandas as pd
+    try:
+        conteudo = await file.read()
+        df = pd.read_excel(io.BytesIO(conteudo))
+        
+        colunas_obrigatorias = ['Nome', 'Casa', 'Telegram ID']
+        for col in colunas_obrigatorias:
+            if col not in df.columns:
+                 raise HTTPException(status_code=400, detail=f"A planilha precisa conter a coluna '{col}'")
+        
+        contador = 0
+        for _, row in df.iterrows():
+            nome = str(row['Nome']).strip()
+            casa = str(row['Casa']).strip()
+            telegram_id = str(row['Telegram ID']).strip()
+            
+            qd = str(row.get('Quadra', '')).strip() if pd.notna(row.get('Quadra')) else ""
+            conj = str(row.get('Conjunto', '')).strip() if pd.notna(row.get('Conjunto')) else ""
+            
+            if not nome or not casa or not telegram_id or nome.lower() == "nan" or telegram_id.lower() == "nan":
+                continue
+            
+            existe = db.query(Morador).filter(
+                Morador.nome_completo.ilike(nome),
+                Morador.casa_lote == casa
+            ).first()
+            
+            if not existe:
+                novo = Morador(nome_completo=nome, quadra=qd, conjunto=conj, casa_lote=casa, telefone=telegram_id)
+                db.add(novo)
+                contador += 1
+                
+        db.commit()
+        return {"mensagem": f"Importação finalizada! {contador} novos moradores adicionados."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro interno no processamento: {str(e)}")
 
 @app.post("/encomendas/registrar")
-def registrar_encomenda(encomenda: EncomendaInput):
-    db = SessionLocal()
-    morador = db.query(MoradorDB).filter(MoradorDB.id == encomenda.morador_id).first()
-    
+def registrar_encomenda(dados: EncomendaCreate, db: Session = Depends(get_db)):
+    morador = db.query(Morador).filter(Morador.id == dados.morador_id).first()
     if not morador:
-        db.close()
-        raise HTTPException(status_code=404, detail="Morador não encontrado.")
+        raise HTTPException(status_code=404, detail="Destinatário inválido.")
     
-    make_transient(morador)
-    db.close()
+    pin = str(random.randint(1000, 9999))
     
-    nome_morador_puro = str(morador.nome_completo).title()
-    quadra_pura = str(morador.quadra).upper()
-    conjunto_pura = str(morador.conjunto).upper()
-    casa_pura = str(morador.casa_lote).upper()
-    tel_morador_puro = str(morador.telefone)
-    
-    endereco_completo_puro = f"Qd. {quadra_pura} - Cj. {conjunto_pura} - Casa {casa_pura}"
-    pin_gerado = str(random.randint(1000, 9999))
-    
-    db_salvar = SessionLocal()
-    nova_encomenda = EncomendaDB(
-        morador_id=encomenda.morador_id,
-        nome_morador=nome_morador_puro,
-        endereco=endereco_completo_puro,
-        codigo_rastreio=encomenda.codigo_rastreio,
-        descricao=encomenda.descricao,
+    nova = Encomenda(
+        morador_id=dados.morador_id,
+        codigo_rastreio=dados.codigo_rastreio.strip(),
+        descricao=dados.descricao.strip(),
+        pin_retirada=pin,
         status="PENDENTE",
-        pin_retirada=pin_gerado,
-        data_entrada=datetime.now()
+        data_entrada=datetime.utcnow()
     )
-    db_salvar.add(nova_encomenda)
-    db_salvar.commit()
-    nova_encomenda_id = nova_encomenda.id
-    db_salvar.close()
+    db.add(nova)
+    db.commit()
+    db.refresh(nova)
     
-    texto_whatsapp = (
-        f"Olá, {nome_morador_puro}! 📦\n\n"
-        f"Informamos que uma nova encomenda chegou para você e já está disponível para retirada na portaria.\n\n"
-        f"🔹 Endereço: {endereco_completo_puro}\n"
-        f"🔹 Identificação/Rastreio: {encomenda.codigo_rastreio}\n\n"
-        f"⚠️ CÓDIGO DE RETIRADA (PIN): {pin_gerado}\n"
-        f"Por gentileza, informe este código ao porteiro e assine o livro de protocolo no ato da retirada.\n\n"
-        f"Atenciosamente,\nAdministração do Condomínio"
+    # Monta a mensagem formatada para o Telegram
+    endereco_formatado = f"Casa {morador.casa_lote}"
+    if morador.quadra:
+        endereco_formatado = f"Qd: {morador.quadra} | Conj: {morador.conjunto} | Casa: {morador.casa_lote}"
+        
+    mensagem = (
+        f"📦 *OLÁ, {morador.nome_completo.upper()}!*\n\n"
+        f"Uma nova encomenda chegou para você na portaria!\n\n"
+        f"📍 *Endereço:* {endereco_formatado}\n"
+        f"🔢 *Rastreio:* `{nova.codigo_rastreio}`\n"
+        f"🔑 *CÓDIGO PIN PARA RETIRADA:* `{nova.pin_retirada}`\n\n"
+        f"_Por favor, apresente este PIN ao porteiro no momento da retirada para fins de auditoria e segurança._"
     )
     
-    return {
-        "sucesso": True, 
-        "encomenda_id": nova_encomenda_id, 
-        "telefone": tel_morador_puro, 
-        "mensagem_texto": texto_whatsapp
-    }
-
-
-@app.post("/encomendas/{encomenda_id}/baixa")
-def dar_baixa_encomenda(encomenda_id: int):
-    db = SessionLocal()
-    encomenda = db.query(EncomendaDB).filter(EncomendaDB.id == encomenda_id).first()
-    if encomenda:
-        encomenda.status = "ENTREGUE"
-        encomenda.data_entrega = datetime.now()
-        db.commit()
-    db.close()
-    return {"sucesso": True, "mensagem": "Baixa registrada!"}
-
+    # Dispara AUTOMATICAMENTE a notificação em segundo plano
+    enviar_mensagem_telegram(chat_id=morador.telefone, texto=mensagem)
+    
+    return {"mensagem": "Encomenda registrada e notificação enviada com sucesso!"}
 
 @app.get("/encomendas/pendentes")
-def listar_pendentes():
-    db = SessionLocal()
-    linhas = db.query(EncomendaDB).filter(EncomendaDB.status == "PENDENTE").all()
-    db.close()
-    return [{
-        "id": l.id, "morador_id": l.morador_id, "nome_morador": l.nome_morador,
-        "endereco": l.endereco, "codigo_rastreio": l.codigo_rastreio,
-        "descricao": l.descricao, "status": l.status, "pin_retirada": l.pin_retirada
-    } for l in linhas]
+def listar_encomendas_pendentes(db: Session = Depends(get_db)):
+    encomendas = db.query(Encomenda).filter(Encomenda.status == "PENDENTE").all()
+    resultado = []
+    for e in encomendas:
+        db.refresh(e)
+        db.refresh(e.morador)
+        m = e.morador
+        end = f"Casa {m.casa_lote}"
+        if m.quadra:
+            end = f"Qd: {m.quadra} | Conj: {m.conjunto} | Casa: {m.casa_lote}"
+        resultado.append({
+            "id": e.id,
+            "nome_morador": m.nome_completo,
+            "endereco": end,
+            "codigo_rastreio": e.codigo_rastreio,
+            "pin_retirada": e.pin_retirada
+        })
+    return resultado
 
+@app.post("/encomendas/{encomenda_id}/baixa")
+def dar_baixa_encomenda(encomenda_id: int, db: Session = Depends(get_db)):
+    enc = db.query(Encomenda).filter(Encomenda.id == encomenda_id, Encomenda.status == "PENDENTE").first()
+    if not enc:
+        raise HTTPException(status_code=404, detail="Encomenda não localizada ou já retirada.")
+    
+    enc.status = "ENTREGUE"
+    enc.data_entrega = datetime.utcnow()
+    db.commit()
+    return {"mensagem": "Baixa realizada com sucesso!"}
 
 @app.get("/encomendas/historico")
-def obter_historico():
-    db = SessionLocal()
-    linhas = db.query(EncomendaDB).order_by(EncomendaDB.id.desc()).limit(150).all()
-    db.close()
-    return [{
-        "id": l.id,
-        "nome_morador": l.nome_morador,
-        "endereco": l.endereco,
-        "codigo_rastreio": l.codigo_rastreio,
-        "status": l.status,
-        "data_entrada": l.data_entrada.strftime("%d/%m/%Y %H:%M") if l.data_entrada else "N/A",
-        "data_entrega": l.data_entrega.strftime("%d/%m/%Y %H:%M") if l.data_entrega else "Aguardando"
-    } for l in lines]
-
+def obter_historico_recente(db: Session = Depends(get_db)):
+    encomendas = db.query(Encomenda).order_by(Encomenda.data_entrada.desc()).limit(50).all()
+    resultado = []
+    for e in encomendas:
+        m = e.morador
+        end = f"Casa {m.casa_lote}"
+        if m.quadra:
+            end = f"Qd: {m.quadra} | Conj: {m.conjunto} | Casa: {m.casa_lote}"
+            
+        entrada_local = (e.data_entrada - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M") if e.data_entrada else "-"
+        entrega_local = (e.data_entrega - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M") if e.data_entrega else "-"
+        
+        resultado.append({
+            "nome_morador": m.nome_completo if m else "Morador Excluído",
+            "endereco": end,
+            "codigo_rastreio": e.codigo_rastreio,
+            "data_entrada": entrada_local,
+            "data_entrega": entrega_local,
+            "status": e.status
+        })
+    return resultado
 
 @app.post("/encomendas/backup-limpeza")
-def exportar_e_limpar_banco():
-    db = SessionLocal()
-    limite_tempo = datetime.now() - timedelta(days=30)
+def backup_e_limpeza_cloud(db: Session = Depends(get_db)):
+    import openpyxl
+    limite_tempo = datetime.utcnow() - timedelta(days=30)
     
-    registros_antigos = db.query(EncomendaDB).filter(
-        EncomendaDB.status == "ENTREGUE",
-        EncomendaDB.data_entrega < limite_tempo
+    encomendas_antigas = db.query(Encomenda).filter(
+        Encomenda.status == "ENTREGUE",
+        Encomenda.data_entrega <= limite_tempo
     ).all()
     
-    if not registros_antigos:
-        db.close()
-        raise HTTPException(status_code=400, detail="Nenhum registro entregue com mais de 30 dias foi encontrado para limpeza.")
+    if not encomendas_antigas:
+        raise HTTPException(status_code=400, detail="Nenhum registro com mais de 30 dias encontrado para limpeza.")
     
-    dados_exportar = []
-    for reg in registros_antigos:
-        dados_exportar.append({
-            "ID Registro": reg.id,
-            "Morador": reg.nome_morador,
-            "Endereço": reg.endereco,
-            "Código Rastreio": reg.codigo_rastreio,
-            "Descrição": reg.descricao,
-            "PIN Utilizado": reg.pin_retirada,
-            "Data Entrada": reg.data_entrada.strftime("%d/%m/%Y %H:%M") if reg.data_entrada else "",
-            "Data Entrega": reg.data_entrega.strftime("%d/%m/%Y %H:%M") if reg.data_entrega else ""
-        })
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Auditoria Expurgo"
+    ws.append(["ID", "Morador", "Código Rastreio", "Descrição", "PIN", "Data Entrada", "Data Entrega"])
+    
+    for e in encomendas_antigas:
+        nome_m = e.morador.nome_completo if e.morador else "Removido"
+        ws.append([
+            e.id, nome_m, e.codigo_rastreio, e.descricao, e.pin_retirada,
+            e.data_entrada.strftime("%Y-%m-%d %H:%M") if e.data_entrada else "",
+            e.data_entrega.strftime("%Y-%m-%d %H:%M") if e.data_entrega else ""
+        ])
+        db.delete(e)
         
-    df = pd.DataFrame(dados_exportar)
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Histórico_Expurgado')
-    output.seek(0)
-    
-    db.query(EncomendaDB).filter(
-        EncomendaDB.status == "ENTREGUE",
-        EncomendaDB.data_entrega < limite_tempo
-    ).delete()
     db.commit()
-    db.close()
     
-    data_arquivo = datetime.now().strftime("%d-%m-%Y")
+    stream = io.BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    
     return StreamingResponse(
-        output,
+        stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=backup_portaria_30_dias_{data_arquivo}.xlsx"}
+        headers={"Content-Disposition": "attachment; filename=backup_limpeza.xlsx"}
     )
