@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 
-# Token do Robô do Telegram fornecido pelo usuário
+# Token do Robô do Telegram
 TELEGRAM_TOKEN = "8997167927:AAH_0Y7IcqCS-3pGRds28EbNsZUoDQVEIug"
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -31,8 +31,7 @@ class Morador(Base):
     quadra = Column(String, nullable=True)
     conjunto = Column(String, nullable=True)
     casa_lote = Column(String, nullable=False)
-    # A coluna telefone agora armazena explicitamente o Chat ID do Telegram do morador
-    telefone = Column(String, nullable=False)
+    telefone = Column(String, nullable=False) # Armazena o Chat ID numérico ou o histórico de telefone
     encomendas = relationship("Encomenda", back_populates="morador", cascade="all, delete-orphan")
 
 class Encomenda(Base):
@@ -49,7 +48,7 @@ class Encomenda(Base):
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Portaria Digital Condomínio - Telegram Automatic")
+app = FastAPI(title="Portaria Digital Condomínio - Transição Suave")
 
 app.add_middleware(
     CORSMiddleware,
@@ -69,17 +68,23 @@ def get_db():
 # ==================== FUNÇÃO AUXILIAR DISPARO TELEGRAM ====================
 
 def enviar_mensagem_telegram(chat_id: str, texto: str):
-    """Envia uma notificação direta e automatizada via API do Telegram"""
+    """Envia a notificação se o chat_id for um ID estritamente numérico do Telegram"""
+    # Validação inteligente: IDs do Telegram são compostos apenas por dígitos numéricos puros.
+    # Telefones antigos costumam ter letras, formatação ou tamanho incompatível com Chat IDs tradicionais.
+    chat_id_limpo = chat_id.strip()
+    if not chat_id_limpo.isdigit():
+        print(f"Aviso: O destino '{chat_id_limpo}' parece ser um telefone antigo. Pulando envio automatizado.")
+        return False
+
     try:
         texto_codificado = urllib.parse.quote(texto)
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={chat_id}&text={texto_codificado}&parse_mode=Markdown"
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={chat_id_limpo}&text={texto_codificado}&parse_mode=Markdown"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=10) as response:
-            return response.read()
+            return True
     except Exception as e:
-        print(f"Erro ao disparar mensagem para o Telegram: {e}")
-        # Não trava a execução do endpoint para evitar falhas críticas de salvamento
-        return None
+        print(f"Erro ao disparar mensagem para o Telegram (ID inválido ou bot bloqueado): {e}")
+        return False
 
 # ==================== SCHEMAS PYDANTIC ====================
 
@@ -88,7 +93,10 @@ class MoradorManualCreate(BaseModel):
     quadra: str = ""
     conjunto: str = ""
     casa_lote: str
-    telefone: str  # Representa o Telegram Chat ID informado pelo operador
+    telefone: str
+
+class AtualizarTelegramRequest(BaseModel):
+    telegram_id: str
 
 class EncomendaCreate(BaseModel):
     morador_id: int
@@ -104,7 +112,6 @@ def listar_moradores(db: Session = Depends(get_db)):
 
 @app.post("/moradores/cadastrar-manual")
 def cadastrar_morador_manual(dados: MoradorManualCreate, db: Session = Depends(get_db)):
-    # Evita duplicidade simples de moradores idênticos
     existente = db.query(Morador).filter(
         Morador.nome_completo.ilike(dados.nome_completo.strip()),
         Morador.casa_lote == dados.casa_lote.strip()
@@ -122,6 +129,17 @@ def cadastrar_morador_manual(dados: MoradorManualCreate, db: Session = Depends(g
     db.add(novo)
     db.commit()
     return {"mensagem": "Morador adicionado com sucesso!"}
+
+# 🌟 NOVA ROTA: Atualiza especificamente o Telegram ID de um morador existente
+@app.post("/moradores/{morador_id}/atualizar-telegram")
+def atualizar_telegram_morador(morador_id: int, dados: AtualizarTelegramRequest, db: Session = Depends(get_db)):
+    morador = db.query(Morador).filter(Morador.id == morador_id).first()
+    if not morador:
+        raise HTTPException(status_code=404, detail="Morador não localizado.")
+    
+    morador.telefone = dados.telegram_id.strip()
+    db.commit()
+    return {"mensagem": "Telegram ID atualizado com sucesso!"}
 
 @app.delete("/moradores/{morador_id}")
 def deletar_morador(morador_id: int, db: Session = Depends(get_db)):
@@ -149,7 +167,6 @@ async def importar_excel_moradores(file: UploadFile = File(...), db: Session = D
             nome = str(row['Nome']).strip()
             casa = str(row['Casa']).strip()
             telegram_id = str(row['Telegram ID']).strip()
-            
             qd = str(row.get('Quadra', '')).strip() if pd.notna(row.get('Quadra')) else ""
             conj = str(row.get('Conjunto', '')).strip() if pd.notna(row.get('Conjunto')) else ""
             
@@ -191,7 +208,6 @@ def registrar_encomenda(dados: EncomendaCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(nova)
     
-    # Monta a mensagem formatada para o Telegram
     endereco_formatado = f"Casa {morador.casa_lote}"
     if morador.quadra:
         endereco_formatado = f"Qd: {morador.quadra} | Conj: {morador.conjunto} | Casa: {morador.casa_lote}"
@@ -205,18 +221,19 @@ def registrar_encomenda(dados: EncomendaCreate, db: Session = Depends(get_db)):
         f"_Por favor, apresente este PIN ao porteiro no momento da retirada para fins de auditoria e segurança._"
     )
     
-    # Dispara AUTOMATICAMENTE a notificação em segundo plano
-    enviar_mensagem_telegram(chat_id=morador.telefone, texto=mensagem)
+    # O método executa o disparo inteligente sem quebrar o fluxo caso seja dados antigos
+    enviado = enviar_mensagem_telegram(chat_id=morador.telefone, texto=mensagem)
     
-    return {"mensagem": "Encomenda registrada e notificação enviada com sucesso!"}
+    if enviado:
+        return {"mensagem": "Encomenda registrada e notificação enviada com sucesso!"}
+    else:
+        return {"mensagem": "Encomenda registrada! (Morador com telefone antigo ou sem Telegram ID configurado)"}
 
 @app.get("/encomendas/pendentes")
 def listar_encomendas_pendentes(db: Session = Depends(get_db)):
     encomendas = db.query(Encomenda).filter(Encomenda.status == "PENDENTE").all()
     resultado = []
     for e in encomendas:
-        db.refresh(e)
-        db.refresh(e.morador)
         m = e.morador
         end = f"Casa {m.casa_lote}"
         if m.quadra:
@@ -235,14 +252,13 @@ def dar_baixa_encomenda(encomenda_id: int, db: Session = Depends(get_db)):
     enc = db.query(Encomenda).filter(Encomenda.id == encomenda_id, Encomenda.status == "PENDENTE").first()
     if not enc:
         raise HTTPException(status_code=404, detail="Encomenda não localizada ou já retirada.")
-    
     enc.status = "ENTREGUE"
     enc.data_entrega = datetime.utcnow()
     db.commit()
     return {"mensagem": "Baixa realizada com sucesso!"}
 
 @app.get("/encomendas/historico")
-def obter_historico_recente(db: Session = Depends(get_db)):
+def obtener_historico_recente(db: Session = Depends(get_db)):
     encomendas = db.query(Encomenda).order_by(Encomenda.data_entrada.desc()).limit(50).all()
     resultado = []
     for e in encomendas:
@@ -268,7 +284,6 @@ def obter_historico_recente(db: Session = Depends(get_db)):
 def backup_e_limpeza_cloud(db: Session = Depends(get_db)):
     import openpyxl
     limite_tempo = datetime.utcnow() - timedelta(days=30)
-    
     encomendas_antigas = db.query(Encomenda).filter(
         Encomenda.status == "ENTREGUE",
         Encomenda.data_entrega <= limite_tempo
@@ -292,7 +307,6 @@ def backup_e_limpeza_cloud(db: Session = Depends(get_db)):
         db.delete(e)
         
     db.commit()
-    
     stream = io.BytesIO()
     wb.save(stream)
     stream.seek(0)
