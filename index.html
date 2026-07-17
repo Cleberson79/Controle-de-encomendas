@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portaria - Condomínio Horizontal (Telegram Auto)</title>
+    <title>Portaria - Condomínio Horizontal (Modo Transição)</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
         .container { max-width: 1200px; margin: 0 auto; }
@@ -33,6 +33,8 @@
         .btn-success:hover { background-color: #059669; }
         .btn-danger { background-color: #ef4444; padding: 5px 10px; font-size: 12px; }
         .btn-danger:hover { background-color: #dc2626; }
+        .btn-blue-edit { background-color: #3b82f6; color: white; padding: 5px 10px; font-size: 12px; font-weight: bold; margin-right: 5px; }
+        .btn-blue-edit:hover { background-color: #2563eb; }
         .btn-baixa { background-color: #f59e0b; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; }
         .btn-baixa:hover { background-color: #d97706; }
         .btn-purge { background-color: #7c3aed; width: 100%; padding: 12px; margin-top: 10px; }
@@ -54,8 +56,8 @@
 
 <div class="container">
     <header>
-        <h1>CONDOMÍNIO HORIZONTAL - GESTÃO DE ENCOMENDAS</h1>
-        <p>Portaria Digital Automática via Telegram Bot 🤖</p>
+        <h1>CONDOMÍNIO RESIDENCIAL SÃO FRANCISCO</h1>
+        <p>Portaria Digital, Gestão de Encomendas -Telegram 🤖</p>
     </header>
 
     <div class="grid">
@@ -76,7 +78,7 @@
                     <label>Descrição / Tipo (Opcional):</label>
                     <input type="text" id="descricao" placeholder="Ex: Caixa, Envelope...">
                 </div>
-                <button onclick="registrarEncomenda()" class="w-100">Salvar e Enviar no Telegram</button>
+                <button onclick="registrarEncomenda()" class="w-100">Salvar Encomenda</button>
             </div>
 
             <!-- CADASTRO MANUAL -->
@@ -101,10 +103,10 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Telegram Chat ID:</label>
+                    <label>Telegram Chat ID (Apenas números):</label>
                     <input type="text" id="manualTelefone" placeholder="Ex: 519485721">
                     <div class="instrucao-telegram">
-                        💡 <b>Como obter o ID?</b> Peça para o morador buscar por <u>@userinfobot</u> no Telegram dele, clicar em Iniciar e enviar o número do "Id" gerado. Ele também precisa iniciar uma conversa com o robô da sua portaria para receber os alertas.
+                        💡 <b>Como obter o ID?</b> Peça para o morador buscar por <u>@userinfobot</u> no Telegram dele e enviar o "Id" gerado. Ele também deve iniciar o robô do condomínio.
                     </div>
                 </div>
                 <button onclick="cadastrarMoradorManual()" class="btn-success w-100">Salvar Novo Morador</button>
@@ -116,7 +118,6 @@
                 <div class="form-group">
                     <label>Importar Lista de Moradores (.xlsx):</label>
                     <input type="file" id="arquivoExcel" accept=".xlsx, .xls">
-                    <div style="font-size:11px; color:#64748b; margin-top:4px;">As colunas devem ser exatamente: <b>Nome</b>, <b>Casa</b> e <b>Telegram ID</b>. (Quadra e Conjunto são opcionais).</div>
                 </div>
                 <button onclick="enviarExcel()" class="w-100" style="margin-bottom: 15px;">Carregar Lista</button>
                 
@@ -162,14 +163,14 @@
             <!-- LISTAGEM DE MORADORES -->
             <div class="card" style="max-height: 300px; overflow-y: auto;">
                 <h2>👥 Moradores Cadastrados</h2>
-                <input type="text" id="buscaMorador" onkeyup="filtrarTabelaMoradores()" class="busca-rapida" placeholder="🔍 Buscar morador por nome ou endereço para excluir...">
+                <input type="text" id="buscaMorador" onkeyup="filtrarTabelaMoradores()" class="busca-rapida" placeholder="🔍 Buscar morador por nome ou endereço para vincular Telegram ID...">
                 
                 <table id="tabelaGerenciarMoradores">
                     <thead>
                         <tr>
                             <th>Nome</th>
-                            <th>Endereço</th>
-                            <th>Ação</th>
+                            <th>Contato Atual</th>
+                            <th>Ações</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -193,8 +194,8 @@
         const linhas = tabela.getElementsByTagName("tr");
 
         for (let i = 1; i < linhas.length; i++) {
-            const colunaMorador = linhas[i].getElementsByTagName("td")[0];
-            const colunaCodigo = linhas[i].getElementsByTagName("td")[1];
+            const colunaMorador = lines[i].getElementsByTagName("td")[0];
+            const colunaCodigo = lines[i].getElementsByTagName("td")[1];
             if (colunaMorador && colunaCodigo) {
                 const textoMorador = colunaMorador.textContent || colunaMorador.innerText;
                 const textoCodigo = colunaCodigo.textContent || colunaCodigo.innerText;
@@ -215,11 +216,9 @@
 
         for (let i = 1; i < linhas.length; i++) {
             const colunaNome = linhas[i].getElementsByTagName("td")[0];
-            const colunaEndereco = linhas[i].getElementsByTagName("td")[1];
-            if (colunaNome && colunaEndereco) {
+            if (colunaNome) {
                 const textoNome = colunaNome.textContent || colunaNome.innerText;
-                const textoEndereco = colunaEndereco.textContent || colunaEndereco.innerText;
-                if (textoNome.toLowerCase().indexOf(filtro) > -1 || textoEndereco.toLowerCase().indexOf(filtro) > -1) {
+                if (textoNome.toLowerCase().indexOf(filtro) > -1) {
                     linhas[i].style.display = "";
                 } else {
                     linhas[i].style.display = "none";
@@ -235,7 +234,7 @@
         const casa = document.getElementById('manualCasa').value;
         const telefone = document.getElementById('manualTelefone').value;
 
-        if (!nome || !casa || !telefone) { alert("Por favor, preencha Nome, Casa e o ID do Telegram!"); return; }
+        if (!nome || !casa || !telefone) { alert("Por favor, preencha os dados obrigatórios!"); return; }
         const dados = { nome_completo: nome, quadra: quadra, conjunto: conjunto, casa_lote: casa, telefone: telefone };
 
         try {
@@ -255,6 +254,30 @@
                 const err = await response.json(); alert(err.detail);
             }
         } catch (error) { alert("Erro de conexão."); }
+    }
+
+    // 🌟 NOVA FUNÇÃO: Abre caixinha rápida na tela do porteiro para vincular Telegram ID na hora
+    async function vincularTelegramID(id, nomeAtual) {
+        const novoID = prompt(`Digite o Telegram Chat ID numérico para o morador:\n${nomeAtual}`);
+        if (novoID === null) return; // Se o operador cancelar
+        if (novoID.trim() === "" || isNaN(novoID.trim())) {
+            alert("Por favor, digite um ID numérico válido (somente números!).");
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_URL}/moradores/${id}/atualizar-telegram`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ telegram_id: novoID.trim() })
+            });
+            if (response.ok) {
+                alert("Telegram ID vinculado com sucesso!");
+                atualizarListaMoradores();
+            } else {
+                alert("Erro ao salvar ID no servidor.");
+            }
+        } catch (error) { alert("Erro de comunicação com o servidor."); }
     }
 
     async function enviarExcel() {
@@ -286,8 +309,18 @@
                 const textoOpcaoCompleto = `${m.nome_completo} (${textoEndereco})`;
                 datalist.innerHTML += `<option value="${textoOpcaoCompleto}"></option>`;
                 
+                // Exibe de forma limpa se é um ID numérico (Telegram) ou formato de telefone
+                const labelContato = isNaN(m.telefone) ? `📱 Tel: ${m.telefone}` : `🤖 ID: ${m.telefone}`;
+                
                 const novaLinha = tabelaMoradores.insertRow();
-                novaLinha.innerHTML = `<td><b>${m.nome_completo}</b></td><td>${textoEndereco}</td><td><button onclick="deletarMorador(${m.id})" class="btn-danger">Excluir</button></td>`;
+                novaLinha.innerHTML = `
+                    <td><b>${m.nome_completo}</b><br><small>${textoEndereco}</small></td>
+                    <td><small>${labelContato}</small></td>
+                    <td>
+                        <button onclick="vincularTelegramID(${m.id}, '${m.nome_completo}')" class="btn-blue-edit">Vincular ID</button>
+                        <button onclick="deletarMorador(${m.id})" class="btn-danger">Excluir</button>
+                    </td>
+                `;
             });
             
             filtrarTabelaMoradores();
@@ -326,7 +359,9 @@
             });
             
             if (response.ok) {
-                alert("Salvo! Notificação enviada de forma automatizada ao Telegram do morador.");
+                const res = await response.json();
+                alert(res.mensagem);
+                
                 atualizarTabelaEncomendas();
                 carregarHistoricoGeral();
 
