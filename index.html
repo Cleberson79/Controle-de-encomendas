@@ -3,22 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portaria - Condomínio Horizontal</title>
+    <title>Portaria - Condomínio Horizontal (Telegram Auto)</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
         .container { max-width: 1200px; margin: 0 auto; }
-        header { background-color: #1f4e78; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center; }
+        header { background-color: #0088cc; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
-        h2 { margin-top: 0; color: #1f4e78; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-size: 18px; }
+        h2 { margin-top: 0; color: #0088cc; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-size: 18px; }
         .form-group { margin-bottom: 12px; }
         .row-inputs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 13px; }
         input[type="text"], input[type="search"], select { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; font-size: 15px; }
         
-        /* 🌟 Estilo especial para os novos campos de busca rápida */
         .busca-rapida {
             background-color: #f8fafc;
-            border: 2px solid #1f4e78;
+            border: 2px solid #0088cc;
             margin-bottom: 12px;
             font-weight: 500;
         }
@@ -27,8 +26,8 @@
             font-style: italic;
         }
 
-        button { background-color: #1f4e78; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; transition: background 0.2s; }
-        button:hover { background-color: #153552; }
+        button { background-color: #0088cc; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; transition: background 0.2s; }
+        button:hover { background-color: #006699; }
         .w-100 { width: 100%; padding: 12px; }
         .btn-success { background-color: #10b981; }
         .btn-success:hover { background-color: #059669; }
@@ -41,18 +40,13 @@
         .grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; background: white; }
         th, td { padding: 10px; text-align: left; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
-        th { background-color: #f8fafc; color: #1f4e78; }
+        th { background-color: #f8fafc; color: #0088cc; }
         .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
         .badge-pendente { background-color: #fef3c7; color: #d97706; }
         .badge-entregue { background-color: #d1fae5; color: #065f46; }
         
-        .btn-zap-emergencia {
-            background-color: #25d366; color: white; display: none; margin-top: 10px; 
-            text-align: center; text-decoration: none; padding: 12px; border-radius: 4px; 
-            font-weight: bold; font-size: 14px; animation: piscar 1.5s infinite;
-        }
-        @keyframes piscar {
-            0% { opacity: 0.8; } 50% { opacity: 1; box-shadow: 0 0 10px #25d366; } 100% { opacity: 0.8; }
+        .instrucao-telegram {
+            font-size: 11px; color: #64748b; background-color: #f1f5f9; padding: 8px; border-radius: 4px; margin-top: 5px; line-height: 1.4;
         }
     </style>
 </head>
@@ -61,11 +55,12 @@
 <div class="container">
     <header>
         <h1>CONDOMÍNIO RESIDENCIAL SÃO FRANCISCO</h1>
-        <p>Portaria Digital, Gestão de Encomendas e Auditoria</p>
+        <p>Portaria Digital, Gestão de Encomendas-Telegram 🤖</p>
     </header>
 
     <div class="grid">
         <div>
+            <!-- REGISTRO DE ENCOMENDA -->
             <div class="card">
                 <h2>📦 Registrar Nova Encomenda</h2>
                 <div class="form-group">
@@ -81,10 +76,10 @@
                     <label>Descrição / Tipo (Opcional):</label>
                     <input type="text" id="descricao" placeholder="Ex: Caixa, Envelope...">
                 </div>
-                <button onclick="registrarEncomenda()" class="w-100">Notificar e Salvar</button>
-                <a id="btnZapLink" href="#" target="_blank" class="btn-zap-emergencia">⚠️ Clique aqui para Enviar o WhatsApp</a>
+                <button onclick="registrarEncomenda()" class="w-100">Salvar e Enviar no Telegram</button>
             </div>
 
+            <!-- CADASTRO MANUAL -->
             <div class="card">
                 <h2>➕ Cadastrar Morador Manualmente</h2>
                 <div class="form-group">
@@ -106,17 +101,22 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Telefone (WhatsApp):</label>
-                    <input type="text" id="manualTelefone" placeholder="Ex: 11999998888">
+                    <label>Telegram Chat ID:</label>
+                    <input type="text" id="manualTelefone" placeholder="Ex: 519485721">
+                    <div class="instrucao-telegram">
+                        💡 <b>Como obter o ID?</b> Peça para o morador buscar por <u>@userinfobot</u> no Telegram dele, clicar em Iniciar e enviar o número do "Id" gerado. Ele também precisa iniciar uma conversa com o robô da sua portaria para receber os alertas.
+                    </div>
                 </div>
                 <button onclick="cadastrarMoradorManual()" class="btn-success w-100">Salvar Novo Morador</button>
             </div>
 
+            <!-- CARGA EXCEL E MANUTENÇÃO ADMINISTRATIVA -->
             <div class="card">
                 <h2>📊 Ferramentas e Carga de Arquivos</h2>
                 <div class="form-group">
                     <label>Importar Lista de Moradores (.xlsx):</label>
                     <input type="file" id="arquivoExcel" accept=".xlsx, .xls">
+                    <div style="font-size:11px; color:#64748b; margin-top:4px;">As colunas devem ser exatamente: <b>Nome</b>, <b>Casa</b> e <b>Telegram ID</b>. (Quadra e Conjunto são opcionais).</div>
                 </div>
                 <button onclick="enviarExcel()" class="w-100" style="margin-bottom: 15px;">Carregar Lista</button>
                 
@@ -127,6 +127,7 @@
         </div>
 
         <div>
+            <!-- AGUARDANDO RETIRADA -->
             <div class="card" style="min-height: 300px;">
                 <h2>📦 Encomendas Aguardando Retirada (Pendentes)</h2>
                 <input type="text" id="buscaPendente" onkeyup="filtrarTabelaPendentes()" class="busca-rapida" placeholder="🔍 Buscar por morador, casa, rastreio ou PIN...">
@@ -143,6 +144,7 @@
                 </table>
             </div>
 
+            <!-- HISTÓRICO GERAL -->
             <div class="card" style="max-height: 400px; overflow-y: auto;">
                 <h2>📜 Histórico Recente e Auditoria</h2>
                 <table id="tabelaHistorico">
@@ -157,6 +159,7 @@
                 </table>
             </div>
 
+            <!-- LISTAGEM DE MORADORES -->
             <div class="card" style="max-height: 300px; overflow-y: auto;">
                 <h2>👥 Moradores Cadastrados</h2>
                 <input type="text" id="buscaMorador" onkeyup="filtrarTabelaMoradores()" class="busca-rapida" placeholder="🔍 Buscar morador por nome ou endereço para excluir...">
@@ -183,22 +186,18 @@
 
     let mapaMoradoresLocais = [];
 
-    // 🌟 NOVA FUNÇÃO: Filtra a tabela de encomendas pendentes em tempo real
     function filtrarTabelaPendentes() {
         const input = document.getElementById("buscaPendente");
         const filtro = input.value.toLowerCase();
         const tabela = document.getElementById("tabelaEncomendas");
         const linhas = tabela.getElementsByTagName("tr");
 
-        // Ignora o cabeçalho (i = 1)
         for (let i = 1; i < linhas.length; i++) {
             const colunaMorador = linhas[i].getElementsByTagName("td")[0];
             const colunaCodigo = linhas[i].getElementsByTagName("td")[1];
-            
             if (colunaMorador && colunaCodigo) {
                 const textoMorador = colunaMorador.textContent || colunaMorador.innerText;
                 const textoCodigo = colunaCodigo.textContent || colunaCodigo.innerText;
-                
                 if (textoMorador.toLowerCase().indexOf(filtro) > -1 || textoCodigo.toLowerCase().indexOf(filtro) > -1) {
                     linhas[i].style.display = "";
                 } else {
@@ -208,22 +207,18 @@
         }
     }
 
-    // 🌟 NOVA FUNÇÃO: Filtra a lista de moradores cadastrados para exclusão em tempo real
     function filtrarTabelaMoradores() {
         const input = document.getElementById("buscaMorador");
         const filtro = input.value.toLowerCase();
         const tabela = document.getElementById("tabelaGerenciarMoradores");
         const linhas = tabela.getElementsByTagName("tr");
 
-        // Ignora o cabeçalho (i = 1)
         for (let i = 1; i < linhas.length; i++) {
             const colunaNome = linhas[i].getElementsByTagName("td")[0];
             const colunaEndereco = linhas[i].getElementsByTagName("td")[1];
-            
             if (colunaNome && colunaEndereco) {
                 const textoNome = colunaNome.textContent || colunaNome.innerText;
                 const textoEndereco = colunaEndereco.textContent || colunaEndereco.innerText;
-                
                 if (textoNome.toLowerCase().indexOf(filtro) > -1 || textoEndereco.toLowerCase().indexOf(filtro) > -1) {
                     linhas[i].style.display = "";
                 } else {
@@ -240,7 +235,7 @@
         const casa = document.getElementById('manualCasa').value;
         const telefone = document.getElementById('manualTelefone').value;
 
-        if (!nome || !casa || !telefone) { alert("Por favor, preencha Nome, Casa e Telefone!"); return; }
+        if (!nome || !casa || !telefone) { alert("Por favor, preencha Nome, Casa e o ID do Telegram!"); return; }
         const dados = { nome_completo: nome, quadra: quadra, conjunto: conjunto, casa_lote: casa, telefone: telefone };
 
         try {
@@ -295,7 +290,6 @@
                 novaLinha.innerHTML = `<td><b>${m.nome_completo}</b></td><td>${textoEndereco}</td><td><button onclick="deletarMorador(${m.id})" class="btn-danger">Excluir</button></td>`;
             });
             
-            // Re-aplica filtro se houver algum termo no campo de busca de moradores
             filtrarTabelaMoradores();
         } catch (error) { console.error("Erro ao listar moradores", error); }
     }
@@ -309,7 +303,6 @@
     }
 
     async function registrarEncomenda() {
-        document.getElementById('btnZapLink').style.display = 'none';
         const textoDigitado = document.getElementById('inputMoradorBusca').value;
         const codigoRastreio = document.getElementById('rastreio').value;
         const desc = document.getElementById('descricao').value;
@@ -333,19 +326,7 @@
             });
             
             if (response.ok) {
-                const resultado = await response.json();
-                const telefoneComCodigoPais = "55" + resultado.telefone;
-                const textoCodificado = encodeURIComponent(resultado.mensagem_texto);
-                const urlWhatsapp = `https://web.whatsapp.com/send?phone=${telefoneComCodigoPais}&text=${textoCodificado}`;
-                
-                const btnEmergencia = document.getElementById('btnZapLink');
-                btnEmergencia.href = urlWhatsapp;
-
-                const novaAba = window.open(urlWhatsapp, '_blank');
-                if (!novaAba || novaAba.closed || typeof novaAba.closed == 'undefined') {
-                    btnEmergencia.style.display = 'block';
-                }
-
+                alert("Salvo! Notificação enviada de forma automatizada ao Telegram do morador.");
                 atualizarTabelaEncomendas();
                 carregarHistoricoGeral();
 
@@ -369,7 +350,7 @@
                 novaLinha.innerHTML = `
                     <td>
                         <b>${e.nome_morador}</b><br><small>${e.endereco}</small><br>
-                        <span style="background-color: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-top: 4px; display: inline-block;">
+                        <span style="background-color: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-top: 4px; display: inline-block;">
                             PIN Caderno: ${e.pin_retirada}
                         </span>
                     </td>
@@ -378,7 +359,6 @@
                 `;
             });
             
-            // Re-aplica filtro se houver algum termo no campo de busca de pendentes
             filtrarTabelaPendentes();
         } catch (error) { console.error("Erro ao carregar encomendas", error); }
     }
@@ -413,34 +393,28 @@
     }
 
     async function fazerBackupELimpar() {
-        if (!confirm("Isso fará o download do Excel de auditoria de todas as encomendas entregues há mais de 30 dias e as REMOVERÁ em definitivo do banco de dados na Nuvem. Deseja prosseguir?")) return;
+        if (!confirm("Deseja fazer o download do Excel de auditoria (+30 dias) e removê-las da Cloud?")) return;
         
         try {
             const response = await fetch(`${API_URL}/encomendas/backup-limpeza`, { method: 'POST' });
-            
             if (response.status === 400) {
-                const err = await response.json();
-                alert(err.detail);
-                return;
+                 const err = await response.json(); alert(err.detail); return;
             }
-            
             if (response.ok) {
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `backup_expurgo_portaria_${new Date().toLocaleDateString().replace(/\//g, '-')}.xlsx`;
+                a.download = `backup_expurgo_telegram_${new Date().toLocaleDateString().replace(/\//g, '-')}.xlsx`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
                 
-                alert("Sucesso! O arquivo de backup foi baixado e o espaço na nuvem foi liberado.");
+                alert("Sucesso! O espaço na nuvem foi liberado.");
                 atualizarTabelaEncomendas();
                 carregarHistoricoGeral();
-            } else {
-                alert("Erro ao executar rotina de manutenção no servidor.");
-            }
-        } catch (error) { alert("Erro de conexão ao solicitar backup."); }
+            } else { alert("Erro ao executar rotina de manutenção."); }
+        } catch (error) { alert("Erro de conexão."); }
     }
 
     document.getElementById('rastreio').addEventListener('keypress', function(e) {
