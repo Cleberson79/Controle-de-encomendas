@@ -6,7 +6,7 @@ import urllib.request
 import urllib.parse
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse  # 🌟 Adicionado HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
@@ -31,7 +31,7 @@ class Morador(Base):
     quadra = Column(String, nullable=True)
     conjunto = Column(String, nullable=True)
     casa_lote = Column(String, nullable=False)
-    telefone = Column(String, nullable=False) # Armazena o Chat ID numérico ou o histórico de telefone
+    telefone = Column(String, nullable=False) 
     encomendas = relationship("Encomenda", back_populates="morador", cascade="all, delete-orphan")
 
 class Encomenda(Base):
@@ -68,9 +68,6 @@ def get_db():
 # ==================== FUNÇÃO AUXILIAR DISPARO TELEGRAM ====================
 
 def enviar_mensagem_telegram(chat_id: str, texto: str):
-    """Envia a notificação se o chat_id for um ID estritamente numérico do Telegram"""
-    # Validação inteligente: IDs do Telegram são compostos apenas por dígitos numéricos puros.
-    # Telefones antigos costumam ter letras, formatação ou tamanho incompatível com Chat IDs tradicionais.
     chat_id_limpo = chat_id.strip()
     if not chat_id_limpo.isdigit():
         print(f"Aviso: O destino '{chat_id_limpo}' parece ser um telefone antigo. Pulando envio automatizado.")
@@ -103,7 +100,20 @@ class EncomendaCreate(BaseModel):
     codigo_rastreio: str
     descricao: str = ""
 
-# ==================== ROTAS DO SISTEMA ====================
+# ==================== ROTAS DE INTERFACE (FRONTEND) ====================
+
+# 🌟 NOVA ROTA RAIZ: Lê o arquivo index.html e serve como a página oficial do sistema!
+@app.get("/", response_class=HTMLResponse)
+def carregar_pagina_principal():
+    caminho_index = "index.html"
+    if not os.path.exists(caminho_index):
+        # Fallback de segurança caso o arquivo não esteja no lugar certo no repositório
+        return "<h1>Erro: Arquivo index.html não localizado na raiz do projeto!</h1>"
+        
+    with open(caminho_index, "r", encoding="utf-8") as f:
+        return f.read()
+
+# ==================== ROTAS DO SISTEMA (API) ====================
 
 @app.get("/moradores")
 def listar_moradores(db: Session = Depends(get_db)):
@@ -130,7 +140,6 @@ def cadastrar_morador_manual(dados: MoradorManualCreate, db: Session = Depends(g
     db.commit()
     return {"mensagem": "Morador adicionado com sucesso!"}
 
-# 🌟 NOVA ROTA: Atualiza especificamente o Telegram ID de um morador existente
 @app.post("/moradores/{morador_id}/atualizar-telegram")
 def atualizar_telegram_morador(morador_id: int, dados: AtualizarTelegramRequest, db: Session = Depends(get_db)):
     morador = db.query(Morador).filter(Morador.id == morador_id).first()
@@ -139,7 +148,7 @@ def atualizar_telegram_morador(morador_id: int, dados: AtualizarTelegramRequest,
     
     morador.telefone = dados.telegram_id.strip()
     db.commit()
-    return {"mensagem": "Telegram ID atualizado com sucesso!"}
+    return {"mensagem": "Telegram ID updated successfully!"}
 
 @app.delete("/moradores/{morador_id}")
 def deletar_morador(morador_id: int, db: Session = Depends(get_db)):
@@ -221,7 +230,6 @@ def registrar_encomenda(dados: EncomendaCreate, db: Session = Depends(get_db)):
         f"_Por favor, apresente este PIN ao porteiro no momento da retirada para fins de auditoria e segurança._"
     )
     
-    # O método executa o disparo inteligente sem quebrar o fluxo caso seja dados antigos
     enviado = enviar_mensagem_telegram(chat_id=morador.telefone, texto=mensagem)
     
     if enviado:
