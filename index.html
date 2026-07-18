@@ -57,7 +57,7 @@
 <div class="container">
     <header>
         <h1>CONDOMÍNIO RESIDENCIAL SÃO FRANCISCO</h1>
-        <p>Portaria Digital, Gestão de Encomendas -Telegram 🤖</p>
+        <p>Portaria Digital, Gestão de Encomendas - Telegram 🤖</p>
     </header>
 
     <div class="grid">
@@ -194,8 +194,9 @@
         const linhas = tabela.getElementsByTagName("tr");
 
         for (let i = 1; i < linhas.length; i++) {
-            const colunaMorador = lines[i].getElementsByTagName("td")[0];
-            const colunaCodigo = lines[i].getElementsByTagName("td")[1];
+            // Correção aqui: alterado de lines[i] para linhas[i]
+            const colunaMorador = linhas[i].getElementsByTagName("td")[0];
+            const colunaCodigo = linhas[i].getElementsByTagName("td")[1];
             if (colunaMorador && colunaCodigo) {
                 const textoMorador = colunaMorador.textContent || colunaMorador.innerText;
                 const textoCodigo = colunaCodigo.textContent || colunaCodigo.innerText;
@@ -204,7 +205,7 @@
                 } else {
                     linhas[i].style.display = "none";
                 }
-            }       
+            }        
         }
     }
 
@@ -223,7 +224,7 @@
                 } else {
                     linhas[i].style.display = "none";
                 }
-            }       
+            }        
         }
     }
 
@@ -256,10 +257,9 @@
         } catch (error) { alert("Erro de conexão."); }
     }
 
-    // 🌟 NOVA FUNÇÃO: Abre caixinha rápida na tela do porteiro para vincular Telegram ID na hora
     async function vincularTelegramID(id, nomeAtual) {
         const novoID = prompt(`Digite o Telegram Chat ID numérico para o morador:\n${nomeAtual}`);
-        if (novoID === null) return; // Se o operador cancelar
+        if (novoID === null) return; 
         if (novoID.trim() === "" || isNaN(novoID.trim())) {
             alert("Por favor, digite um ID numérico válido (somente números!).");
             return;
@@ -309,7 +309,6 @@
                 const textoOpcaoCompleto = `${m.nome_completo} (${textoEndereco})`;
                 datalist.innerHTML += `<option value="${textoOpcaoCompleto}"></option>`;
                 
-                // Exibe de forma limpa se é um ID numérico (Telegram) ou formato de telefone
                 const labelContato = isNaN(m.telefone) ? `📱 Tel: ${m.telefone}` : `🤖 ID: ${m.telefone}`;
                 
                 const novaLinha = tabelaMoradores.insertRow();
@@ -380,6 +379,7 @@
             const tabela = document.getElementById('tabelaEncomendas').getElementsByTagName('tbody')[0];
             tabela.innerHTML = "";
 
+            ences = encomendas || [];
             encomendas.forEach(e => {
                 const novaLinha = tabela.insertRow();
                 novaLinha.innerHTML = `
