@@ -11,8 +11,10 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 
-# Token do Robô do Telegram
-TELEGRAM_TOKEN = "8997167927:AAH_0Y7IcqCS-3pGRds28EbNsZUoDQVEIug"
+import os
+
+# O sistema vai tentar pegar o token salvo no Render. Se não achar, usa o novo como plano B.
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8997167927:AAH_0Y7IcqCS-3pGRds28EbNsZUoDQVElug")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
