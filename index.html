@@ -258,27 +258,31 @@
     }
 
     async function vincularTelegramID(id, nomeAtual) {
-        const novoID = prompt(`Digite o Telegram Chat ID numérico para o morador:\n${nomeAtual}`);
-        if (novoID === null) return; 
-        if (novoID.trim() === "" || isNaN(novoID.trim())) {
-            alert("Por favor, digite um ID numérico válido (somente números!).");
-            return;
-        }
+    const novoID = prompt(`Digite o Telegram Chat ID numérico para o morador:\n${nomeAtual}`);
+    if (novoID === null) return; 
+    
+    // Limpa espaços em branco que o usuário possa ter digitado sem querer
+    const idLimpo = novoID.trim();
 
-        try {
-            const response = await fetch(`${API_URL}/moradores/${id}/atualizar-telegram`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ telegram_id: novoID.trim() })
-            });
-            if (response.ok) {
-                alert("Telegram ID vinculado com sucesso!");
-                atualizarListaMoradores();
-            } else {
-                alert("Erro ao salvar ID no servidor.");
-            }
-        } catch (error) { alert("Erro de comunicação com o servidor."); }
+    if (idLimpo === "" || isNaN(idLimpo)) {
+        alert("Por favor, digite um ID numérico válido (somente números!).");
+        return;
     }
+
+    try {
+        const response = await fetch(`${API_URL}/moradores/${id}/atualizar-telegram`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ telegram_id: idLimpo }) // Garante o envio do ID limpo
+        });
+        if (response.ok) {
+            alert("Telegram ID vinculado com sucesso!");
+            atualizarListaMoradores();
+        } else {
+            alert("Erro ao salvar ID no servidor.");
+        }
+    } catch (error) { alert("Erro de comunicação com o servidor."); }
+}
 
     async function enviarExcel() {
         const fileInput = document.getElementById('arquivoExcel');
