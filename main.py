@@ -68,7 +68,12 @@ def get_db():
 # ==================== FUNÇÃO AUXILIAR DISPARO TELEGRAM ====================
 
 def enviar_mensagem_telegram(chat_id: str, texto: str):
-    chat_id_limpo = chat_id.strip()
+    # Se o pandas importou como float (ex: '1022040075.0'), remove o '.0'
+    if chat_id and chat_id.strip().endswith('.0'):
+        chat_id_limpo = chat_id.strip().split('.')[0]
+    else:
+        chat_id_limpo = chat_id.strip() if chat_id else ""
+
     if not chat_id_limpo.isdigit():
         print(f"Aviso: O destino '{chat_id_limpo}' parece ser um telefone antigo. Pulando envio automatizado.")
         return False
@@ -172,10 +177,18 @@ async def importar_excel_moradores(file: UploadFile = File(...), db: Session = D
                  raise HTTPException(status_code=400, detail=f"A planilha precisa conter a coluna '{col}'")
         
         contador = 0
+      # Substitua o trecho de leitura dentro do loop for na rota de importação por este:
         for _, row in df.iterrows():
             nome = str(row['Nome']).strip()
             casa = str(row['Casa']).strip()
-            telegram_id = str(row['Telegram ID']).strip()
+            
+            # Limpa o ID do Telegram tirando o .0 flutuante caso exista
+            raw_telegram_id = str(row['Telegram ID']).strip()
+            if raw_telegram_id.endswith('.0'):
+                telegram_id = raw_telegram_id.split('.')[0]
+            else:
+                telegram_id = raw_telegram_id
+                
             qd = str(row.get('Quadra', '')).strip() if pd.notna(row.get('Quadra')) else ""
             conj = str(row.get('Conjunto', '')).strip() if pd.notna(row.get('Conjunto')) else ""
             
