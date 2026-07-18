@@ -6,7 +6,7 @@ import urllib.request
 import urllib.parse
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse  # 🌟 Adicionado HTMLResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
@@ -68,14 +68,22 @@ def get_db():
 # ==================== FUNÇÃO AUXILIAR DISPARO TELEGRAM ====================
 
 def enviar_mensagem_telegram(chat_id: str, texto: str):
-    # Se o pandas importou como float (ex: '1022040075.0'), remove o '.0'
-    if chat_id and chat_id.strip().endswith('.0'):
-        chat_id_limpo = chat_id.strip().split('.')[0]
+    if not chat_id:
+        print("Erro no disparo: O campo chat_id está completamente vazio.")
+        return False
+        
+    chat_id_str = str(chat_id).strip()
+    
+    # Remove o '.0' flutuante caso venha do Excel/Pandas
+    if chat_id_str.endswith('.0'):
+        chat_id_limpo = chat_id_str.split('.')[0]
     else:
-        chat_id_limpo = chat_id.strip() if chat_id else ""
+        chat_id_limpo = chat_id_str
+
+    print(f"Tentando enviar mensagem do Telegram para o ID processado: '{chat_id_limpo}'")
 
     if not chat_id_limpo.isdigit():
-        print(f"Aviso: O destino '{chat_id_limpo}' parece ser um telefone antigo. Pulando envio automatizado.")
+        print(f"Aviso: O destino '{chat_id_limpo}' não contém apenas números. Pulando envio.")
         return False
 
     try:
@@ -83,9 +91,10 @@ def enviar_mensagem_telegram(chat_id: str, texto: str):
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={chat_id_limpo}&text={texto_codificado}&parse_mode=Markdown"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=10) as response:
+            print("Mensagem enviada com sucesso para a API do Telegram!")
             return True
     except Exception as e:
-        print(f"Erro ao disparar mensagem para o Telegram (ID inválido ou bot bloqueado): {e}")
+        print(f"Erro ao disparar mensagem para o Telegram (Bot bloqueado ou ID inexistente): {e}")
         return False
 
 # ==================== SCHEMAS PYDANTIC ====================
@@ -107,12 +116,10 @@ class EncomendaCreate(BaseModel):
 
 # ==================== ROTAS DE INTERFACE (FRONTEND) ====================
 
-# 🌟 NOVA ROTA RAIZ: Lê o arquivo index.html e serve como a página oficial do sistema!
 @app.get("/", response_class=HTMLResponse)
 def carregar_pagina_principal():
     caminho_index = "index.html"
     if not os.path.exists(caminho_index):
-        # Fallback de segurança caso o arquivo não esteja no lugar certo no repositório
         return "<h1>Erro: Arquivo index.html não localizado na raiz do projeto!</h1>"
         
     with open(caminho_index, "r", encoding="utf-8") as f:
@@ -122,8 +129,7 @@ def carregar_pagina_principal():
 
 @app.get("/moradores")
 def listar_moradores(db: Session = Depends(get_db)):
-    moradores = db.query(Morador).order_by(Morador.nome_completo).all()
-    return moradores
+    return db.query(Morador).order_by(Morador.nome_completo).all()
 
 @app.post("/moradores/cadastrar-manual")
 def cadastrar_morador_manual(dados: MoradorManualCreate, db: Session = Depends(get_db)):
@@ -134,12 +140,15 @@ def cadastrar_morador_manual(dados: MoradorManualCreate, db: Session = Depends(g
     if existente:
          raise HTTPException(status_code=400, detail="Morador já cadastrado para esta unidade!")
     
+    # Força a limpeza do ID do telegram enviado manualmente
+    tel_limpo = dados.telefone.strip().split('.')[0] if dados.telefone.strip().endswith('.0') else dados.telefone.strip()
+    
     novo = Morador(
         nome_completo=dados.nome_completo.strip(),
         quadra=dados.quadra.strip(),
         conjunto=dados.conjunto.strip(),
         casa_lote=dados.casa_lote.strip(),
-        telefone=dados.telefone.strip()
+        telefone=tel_limpo
     )
     db.add(novo)
     db.commit()
@@ -151,7 +160,8 @@ def atualizar_telegram_morador(morador_id: int, dados: AtualizarTelegramRequest,
     if not morador:
         raise HTTPException(status_code=404, detail="Morador não localizado.")
     
-    morador.telefone = dados.telegram_id.strip()
+    tel_limpo = dados.telegram_id.strip().split('.')[0] if dados.telegram_id.strip().endswith('.0') else dados.telegram_id.strip()
+    morador.telefone = tel_limpo
     db.commit()
     return {"mensagem": "Telegram ID updated successfully!"}
 
@@ -171,23 +181,24 @@ async def importar_excel_moradores(file: UploadFile = File(...), db: Session = D
         conteudo = await file.read()
         df = pd.read_excel(io.BytesIO(conteudo))
         
-        colunas_obrigatorias = ['Nome', 'Casa', 'Telegram ID']
-        for col in colunas_obrigatorias:
-            if col not in df.columns:
-                 raise HTTPException(status_code=400, detail=f"A planilha precisa conter a coluna '{col}'")
+        # Mapeamento inteligente para aceitar tanto o modelo antigo quanto o novo de planilha
+        col_nome = next((c for c in df.columns if c.lower() in ['nome completo', 'nome']), None)
+        col_casa = next((c for c in df.columns if c.lower() in ['casa lote', 'casa']), None)
+        col_telegram = next((c for c in df.columns if c.lower() in ['telegram id', 'telegram_id', 'id telegram']), None)
+        
+        if not col_nome or not col_casa or not col_telegram:
+            raise HTTPException(
+                status_code=400, 
+                detail="A planilha precisa conter as colunas de Nome (ou Nome Completo), Casa (ou Casa Lote) e Telegram ID."
+            )
         
         contador = 0
-      # Substitua o trecho de leitura dentro do loop for na rota de importação por este:
         for _, row in df.iterrows():
-            nome = str(row['Nome']).strip()
-            casa = str(row['Casa']).strip()
+            nome = str(row[col_nome]).strip()
+            casa = str(row[col_casa]).strip()
             
-            # Limpa o ID do Telegram tirando o .0 flutuante caso exista
-            raw_telegram_id = str(row['Telegram ID']).strip()
-            if raw_telegram_id.endswith('.0'):
-                telegram_id = raw_telegram_id.split('.')[0]
-            else:
-                telegram_id = raw_telegram_id
+            raw_telegram_id = str(row[col_telegram]).strip()
+            telegram_id = raw_telegram_id.split('.')[0] if raw_telegram_id.endswith('.0') else raw_telegram_id
                 
             qd = str(row.get('Quadra', '')).strip() if pd.notna(row.get('Quadra')) else ""
             conj = str(row.get('Conjunto', '')).strip() if pd.notna(row.get('Conjunto')) else ""
@@ -205,6 +216,7 @@ async def importar_excel_moradores(file: UploadFile = File(...), db: Session = D
                 db.add(novo)
                 contador += 1
                 
+        db.add_all([])
         db.commit()
         return {"mensagem": f"Importação finalizada! {contador} novos moradores adicionados."}
     except Exception as e:
@@ -243,6 +255,7 @@ def registrar_encomenda(dados: EncomendaCreate, db: Session = Depends(get_db)):
         f"_Por favor, apresente este PIN ao porteiro no momento da retirada para fins de auditoria e segurança._"
     )
     
+    print(f"Log Registro: Morador {morador.nome_completo} possui o valor '{morador.telefone}' guardado no campo telefone.")
     enviado = enviar_mensagem_telegram(chat_id=morador.telefone, texto=mensagem)
     
     if enviado:
@@ -256,12 +269,12 @@ def listar_encomendas_pendentes(db: Session = Depends(get_db)):
     resultado = []
     for e in encomendas:
         m = e.morador
-        end = f"Casa {m.casa_lote}"
-        if m.quadra:
+        end = f"Casa {m.casa_lote}" if m else "N/A"
+        if m and m.quadra:
             end = f"Qd: {m.quadra} | Conj: {m.conjunto} | Casa: {m.casa_lote}"
         resultado.append({
             "id": e.id,
-            "nome_morador": m.nome_completo,
+            "nome_morador": m.nome_completo if m else "Morador Removido",
             "endereco": end,
             "codigo_rastreio": e.codigo_rastreio,
             "pin_retirada": e.pin_retirada
@@ -270,7 +283,7 @@ def listar_encomendas_pendentes(db: Session = Depends(get_db)):
 
 @app.post("/encomendas/{encomenda_id}/baixa")
 def dar_baixa_encomenda(encomenda_id: int, db: Session = Depends(get_db)):
-    enc = db.query(Encomenda).filter(Encomenda.id == encomenda_id, Encomenda.status == "PENDENTE").first()
+    enc = db.query(Encomenda).filter(Encomenda.id == enigma_id if False else Encomenda.id == encomenda_id, Encomenda.status == "PENDENTE").first()
     if not enc:
         raise HTTPException(status_code=404, detail="Encomenda não localizada ou já retirada.")
     enc.status = "ENTREGUE"
@@ -284,8 +297,8 @@ def obtener_historico_recente(db: Session = Depends(get_db)):
     resultado = []
     for e in encomendas:
         m = e.morador
-        end = f"Casa {m.casa_lote}"
-        if m.quadra:
+        end = f"Casa {m.casa_lote}" if m else "N/A"
+        if m and m.quadra:
             end = f"Qd: {m.quadra} | Conj: {m.conjunto} | Casa: {m.casa_lote}"
             
         entrada_local = (e.data_entrada - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M") if e.data_entrada else "-"
